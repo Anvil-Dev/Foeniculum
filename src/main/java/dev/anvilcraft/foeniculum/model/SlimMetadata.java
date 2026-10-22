@@ -1,11 +1,12 @@
 package dev.anvilcraft.foeniculum.model;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import dev.anvilcraft.foeniculum.version.VersionRanges;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -14,7 +15,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import dev.anvilcraft.foeniculum.version.VersionRanges;
 
 /**
  * 独立的瘦身依赖描述文件 {@code -slim-metadata.json}。
