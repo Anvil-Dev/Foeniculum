@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import org.gradle.api.GradleException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -141,6 +142,45 @@ class SlimTreeResolverTest {
     }
 
     @Test
+    void 中间状态出现的空交集不会被误判为冲突() {
+        // x 的 1.0.0 要求 d 落在 [1.0,2.0)，但 d 被直接声明为 2.0.0；x 的 2.0.0 不再声明 d。
+        // y 把 x 抬到 2.0.0 后整张图自洽，因此迭代途中 d 的空交集只是中间状态，不能立即报错。
+        source.metadata("com.example", "a", "1.0.0", List.of(slimDependency("com.example", "x", "[1.0,3.0)", "1.0.0")));
+        source.metadata("com.example", "b", "1.0.0", List.of(slimDependency("com.example", "y", "[1.0,)", "1.0.0")));
+        source.metadata("com.example", "x", "1.0.0", List.of(slimDependency("com.example", "d", "[1.0,2.0)", "1.0.0")));
+        source.metadata("com.example", "x", "2.0.0", List.of());
+        source.metadata("com.example", "y", "1.0.0", List.of(slimDependency("com.example", "x", "[2.0,3.0)", "2.0.0")));
+        source.jar("com.example", "a", "1.0.0");
+        source.jar("com.example", "b", "1.0.0");
+        source.jar("com.example", "x", "1.0.0");
+        source.jar("com.example", "x", "2.0.0");
+        source.jar("com.example", "y", "1.0.0");
+        source.jar("com.example", "d", "2.0.0");
+
+        SlimTree tree = resolve(
+                declaration("com.example", "a", "1.0.0"),
+                declaration("com.example", "b", "1.0.0"),
+                declaration("com.example", "d", "2.0.0"));
+
+        assertEquals("2.0.0", tree.find("com.example:x").version());
+        assertEquals("2.0.0", tree.find("com.example:d").version());
+    }
+
+    @Test
+    void 真正无法调和的区间仍然抛出冲突() {
+        source.metadata("com.example", "a", "1.0.0", List.of(slimDependency("com.example", "shared", "[1.0,2.0)", "1.5.0")));
+        source.metadata("com.example", "b", "1.0.0", List.of(slimDependency("com.example", "shared", "[2.0,3.0)", "2.5.0")));
+        source.jar("com.example", "a", "1.0.0");
+        source.jar("com.example", "b", "1.0.0");
+
+        ModuleConflictException error = assertThrows(
+                ModuleConflictException.class,
+                () -> resolve(declaration("com.example", "a", "1.0.0"), declaration("com.example", "b", "1.0.0")));
+
+        assertTrue(error.getMessage().contains("com.example:shared"), error.getMessage());
+    }
+
+    @Test
     void 循环依赖被截断而不会无限递归() {
         source.metadata("com.example", "a", "1.0.0", List.of(slimDependency("com.example", "b", "[1.0,)", "1.0.0")));
         source.metadata("com.example", "b", "1.0.0", List.of(slimDependency("com.example", "a", "[1.0,)", "1.0.0")));
@@ -217,10 +257,12 @@ class SlimTreeResolverTest {
 
     @Test
     void 构件缺失时抛出异常而不是静默跳过() {
-        assertThrows(
-                ModuleConflictException.class,
+        GradleException error = assertThrows(
+                GradleException.class,
                 () -> new SlimTreeResolver(new FakeSource(downloadDirectory), java.util.Set.of())
                         .resolve(List.of(declaration("com.example", "missing", "1.0.0")), downloadDirectory));
+
+        assertTrue(error.getMessage().contains("com.example:missing"), error.getMessage());
     }
 
     private SlimTree resolve(SlimDeclaration... declarations) {

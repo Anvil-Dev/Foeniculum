@@ -42,6 +42,58 @@ class VersionRangesTest {
     }
 
     @Test
+    void Maven的元版本写法被当作动态版本拒绝() {
+        // RELEASE 与 LATEST 的解析结果取决于仓库当时的内容，写进元数据后下游无法得到确定的版本。
+        assertThrows(IllegalArgumentException.class, () -> VersionRanges.parse("RELEASE", "测试"));
+        assertThrows(IllegalArgumentException.class, () -> VersionRanges.parse("LATEST", "测试"));
+        assertThrows(IllegalArgumentException.class, () -> VersionRanges.parse("release", "测试"));
+    }
+
+    @Test
+    void 单侧无界的区间被正确格式化() {
+        assertEquals("[1.2.3,)", VersionRanges.parse("[1.2.3,)", "测试").format());
+        assertEquals("(,2.0]", VersionRanges.parse("(,2.0]", "测试").format());
+        assertEquals("(,2.0)", VersionRanges.parse("(,2.0)", "测试").format());
+        assertEquals("[1.0,)", VersionRanges.parse("[1.0,]", "测试").format());
+    }
+
+    @Test
+    void 上下界相同的闭区间被识别为确定版本() {
+        VersionRanges.Range range = VersionRanges.parse("[1.2.3]", "测试");
+
+        assertTrue(range.isExact());
+        assertEquals("[1.2.3]", range.format());
+        assertFalse(range.isEmpty());
+    }
+
+    @Test
+    void 区间在开区间上界处不含该版本() {
+        VersionRanges.Range range = VersionRanges.parse("[2.0.0,3.0.0)", "测试");
+
+        assertTrue(VersionRanges.contains(range, "2.0.0"));
+        assertTrue(VersionRanges.contains(range, "2.5.0"));
+        assertFalse(VersionRanges.contains(range, "3.0.0"));
+    }
+
+    @Test
+    void 固定版本在求交时被当作至少该版本() {
+        VersionRanges.Range intersection = VersionRanges.intersect(List.of(
+                VersionRanges.parse("2.0", "测试"),
+                VersionRanges.parse("[1.0,3.0)", "测试")));
+
+        assertEquals("[2.0,3.0)", intersection.format());
+    }
+
+    @Test
+    void 与单侧无界区间求交时保留有界的一侧() {
+        VersionRanges.Range intersection = VersionRanges.intersect(List.of(
+                VersionRanges.parse("[1.0,)", "测试"),
+                VersionRanges.parse("[2.0,3.0)", "测试")));
+
+        assertEquals("[2.0,3.0)", intersection.format());
+    }
+
+    @Test
     void 求交时取更严格的下界与上界() {
         VersionRanges.Range intersection = VersionRanges.intersect(List.of(
                 VersionRanges.parse("[1.0,3.0)", "测试"),

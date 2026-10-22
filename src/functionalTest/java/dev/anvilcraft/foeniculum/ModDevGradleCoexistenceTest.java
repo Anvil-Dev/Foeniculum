@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import dev.anvilcraft.foeniculum.fixture.LocalMavenRepository;
 import dev.anvilcraft.foeniculum.fixture.LocalMavenRepository.Dependency;
 import dev.anvilcraft.foeniculum.fixture.LocalMavenRepository.Module;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import org.gradle.testkit.runner.BuildResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -34,12 +36,15 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
     void setUp() throws IOException {
         repository = new LocalMavenRepository(root.resolve("repository"));
         repository.publish(Module.builder("com.example", "native-lib", "1.0.0").build());
-        // 与原生内嵌模块同名，用于验证去重时保留原生侧。
+        // 与原生内嵌模块同名且同版本，用于验证去重时保留原生侧且不产生版本冲突。
         repository.publish(Module.builder("com.example", "shared-lib", "1.0.0").build());
+        // 更高版本供「原生版本不满足瘦身侧区间」的用例使用。
         repository.publish(Module.builder("com.example", "shared-lib", "2.0.0").build());
         repository.publish(Module.builder("com.example", "slim-lib", "1.0.0")
-                .dependencies(Dependency.of("com.example", "shared-lib", "[2.0,3.0)", "2.0.0"))
+                .dependencies(Dependency.of("com.example", "shared-lib", "[1.0,2.0)", "1.0.0"))
                 .build());
+        // 另有一个模块只被瘦身侧引入，用于确认瘦身条目确实进入了主包。
+        repository.publish(Module.builder("com.example", "slim-only", "1.0.0").build());
 
         writeSettings(root, """
                 pluginManagement {
@@ -88,6 +93,7 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
                     jarJar 'com.example:native-lib:1.0.0'
                     jarJar 'com.example:shared-lib:1.0.0'
                     slimJarJar 'com.example:slim-lib:1.0.0'
+                    slimJarJar 'com.example:slim-only:1.0.0'
                 }
                 """.formatted(repository.url());
     }
@@ -99,9 +105,9 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
         Path jar = project.resolve("build/libs/demo-1.0.0.jar");
         assertFileExists(jar);
 
-        // 原生两个模块 + 瘦身侧引入的 shared-lib 只保留一份（来自原生），另加 slim-lib。
+        // 原生两个模块 + 瘦身侧独有模块；shared-lib 两侧都有，只保留原生那一份。
         assertEquals(
-                List.of("com.example:native-lib", "com.example:shared-lib", "com.example:slim-lib"),
+                List.of("com.example:native-lib", "com.example:shared-lib", "com.example:slim-lib", "com.example:slim-only"),
                 metadataModuleIds(jar));
 
         for (String path : metadataPaths(jar)) {
@@ -118,15 +124,7 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
         run(root, "jar");
 
         Path jar = project.resolve("build/libs/demo-1.0.0.jar");
-        JsonObject metadata = entryJson(jar, "META-INF/jarjar/metadata.json");
-
-        JsonObject shared = null;
-        for (var element : metadata.getAsJsonArray("jars")) {
-            JsonObject entry = element.getAsJsonObject();
-            if ("shared-lib".equals(entry.getAsJsonObject("identifier").get("artifact").getAsString())) {
-                shared = entry;
-            }
-        }
+        JsonObject shared = metadataEntry(jar, "com.example:shared-lib");
         assertTrue(shared != null, "元数据中应保留原生内嵌的 shared-lib");
         assertEquals("1.0.0", shared.getAsJsonObject("version").get("artifactVersion").getAsString(),
                 "重复模块应保留原生侧版本");
@@ -134,9 +132,23 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
     }
 
     @Test
-    void 瘦身包与不装插件时的内容一致_只含原生内嵌内容() throws IOException {
-        repository.publish(Module.builder("com.example", "native-lib", "1.0.0").build());
+    void 原生内嵌版本不满足瘦身侧区间时构建失败() throws IOException {
+        // 原生把 shared-lib 内嵌为 1.0.0，另有一个瘦身模块要求 [2.0,3.0)。
+        // 保留原生侧会让运行时 FML 报 JiJ 冲突，因此这种情况必须在构建期就失败。
+        repository.publish(Module.builder("com.example", "strict-lib", "1.0.0")
+                .dependencies(Dependency.of("com.example", "shared-lib", "[2.0,3.0)", "2.0.0"))
+                .build());
+        writeBuildFile(root, buildScript().replace(
+                "slimJarJar 'com.example:slim-lib:1.0.0'", "slimJarJar 'com.example:strict-lib:1.0.0'"));
 
+        BuildResult result = runExpectingFailure(root, "jar");
+
+        assertTrue(result.getOutput().contains("com.example:shared-lib"), result.getOutput());
+        assertTrue(result.getOutput().contains("[2.0,3.0)"), result.getOutput());
+    }
+
+    @Test
+    void 瘦身包与不装插件时的内容一致_只含原生内嵌内容() throws IOException {
         run(root, "slimJar");
 
         Path slimJar = project.resolve("build/libs/demo-1.0.0-slim.jar");
@@ -152,9 +164,12 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
                         .filter(name -> !name.endsWith("/"))
                         .toList());
 
-        // 瘦身内容（slim-lib）不应出现在瘦身包里，它只存在于描述文件中。
+        // 瘦身内容不应出现在瘦身包里，它们只存在于描述文件中。
         assertFalse(
                 entries(slimJar).contains("META-INF/jarjar/slim-lib-1.0.0.jar"),
+                "瘦身包不应包含由 slimJarJar 引入的模块");
+        assertFalse(
+                entries(slimJar).contains("META-INF/jarjar/slim-only-1.0.0.jar"),
                 "瘦身包不应包含由 slimJarJar 引入的模块");
         assertContains(slimJar, "com/demo/Demo.class");
     }
@@ -180,7 +195,9 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
 
     @Test
     void 未使用瘦身依赖时产物与原生行为完全一致() throws IOException {
-        writeBuildFile(root, buildScript().replace("    slimJarJar 'com.example:slim-lib:1.0.0'\n", ""));
+        writeBuildFile(root, buildScript()
+                .replace("    slimJarJar 'com.example:slim-lib:1.0.0'\n", "")
+                .replace("    slimJarJar 'com.example:slim-only:1.0.0'\n", ""));
 
         run(root, "jar", "slimJar", "slimMetadata");
 
@@ -193,6 +210,12 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
                 "未使用 slimJarJar 时主包的元数据应与原生产物逐字相同");
 
         // 没有声明时描述文件仍然生成，只是依赖列表为空，这样发布配置始终成套。
-        assertFileExists(project.resolve("build/foeniculum/publish/demo-1.0.0-slim-metadata.json"));
+        Path metadata = project.resolve("build/foeniculum/publish/demo-1.0.0-slim-metadata.json");
+        assertFileExists(metadata);
+        assertEquals(
+                0,
+                JsonParser.parseString(Files.readString(metadata)).getAsJsonObject()
+                        .getAsJsonArray("dependencies")
+                        .size());
     }
 }

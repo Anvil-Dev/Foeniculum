@@ -1,7 +1,6 @@
 package dev.anvilcraft.foeniculum;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -13,7 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.zip.ZipEntry;
@@ -29,9 +30,6 @@ import org.gradle.testkit.runner.UnexpectedBuildFailure;
  * 任务接线、配置属性继承、发布挂载这些行为只有在完整构建中才会暴露问题。
  */
 abstract class BuildFixture {
-    /** 插件从当前构建的发布产物解析；功能测试始终测试刚编译出的插件。 */
-    protected static final String PLUGIN_ID = "dev.anvilcraft.foeniculum";
-
     protected Path projectDirectory(Path root) {
         return root.resolve("project");
     }
@@ -116,29 +114,56 @@ abstract class BuildFixture {
                 "归档 " + archive.getFileName() + " 缺少条目 " + name + "，实际条目：" + entries(archive));
     }
 
-    protected static void assertMissing(Path archive, String name) throws IOException {
-        assertFalse(entries(archive).contains(name),
-                "归档 " + archive.getFileName() + " 不应包含条目 " + name);
+    /** 归档中 jarjar 元数据记录的条目，按记录顺序返回。 */
+    protected static List<JsonObject> metadataJars(Path jar) throws IOException {
+        List<JsonObject> jars = new ArrayList<>();
+        for (var element : entryJson(jar, "META-INF/jarjar/metadata.json").getAsJsonArray("jars")) {
+            jars.add(element.getAsJsonObject());
+        }
+        return jars;
     }
 
-    /** 主 jar 中 jarjar 元数据记录的模块标识。 */
+    /** 元数据条目的模块标识，即 {@code group:artifact}。 */
+    protected static String moduleIdOf(JsonObject entry) {
+        JsonObject identifier = entry.getAsJsonObject("identifier");
+        return identifier.get("group").getAsString() + ":" + identifier.get("artifact").getAsString();
+    }
+
+    /** 主 jar 中 jarjar 元数据记录的模块标识，保持记录顺序。 */
     protected static List<String> metadataModuleIds(Path jar) throws IOException {
-        JsonObject metadata = entryJson(jar, "META-INF/jarjar/metadata.json");
         List<String> ids = new ArrayList<>();
-        for (var element : metadata.getAsJsonArray("jars")) {
-            JsonObject entry = element.getAsJsonObject();
-            ids.add(entry.getAsJsonObject("identifier").get("group").getAsString()
-                    + ":" + entry.getAsJsonObject("identifier").get("artifact").getAsString());
+        for (JsonObject entry : metadataJars(jar)) {
+            ids.add(moduleIdOf(entry));
         }
         return ids;
     }
 
+    /** 元数据中模块标识到版本的映射，便于断言某个模块最终内嵌了哪个版本。 */
+    protected static Map<String, String> metadataVersions(Path jar) throws IOException {
+        Map<String, String> versions = new LinkedHashMap<>();
+        for (JsonObject entry : metadataJars(jar)) {
+            versions.put(
+                    moduleIdOf(entry),
+                    entry.getAsJsonObject("version").get("artifactVersion").getAsString());
+        }
+        return versions;
+    }
+
+    /** 取元数据中某个模块的条目；不存在时返回 {@code null}。 */
+    protected static JsonObject metadataEntry(Path jar, String moduleId) throws IOException {
+        for (JsonObject entry : metadataJars(jar)) {
+            if (moduleIdOf(entry).equals(moduleId)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
     /** 主 jar 中 jarjar 元数据记录的内嵌路径。 */
     protected static List<String> metadataPaths(Path jar) throws IOException {
-        JsonObject metadata = entryJson(jar, "META-INF/jarjar/metadata.json");
         List<String> paths = new ArrayList<>();
-        for (var element : metadata.getAsJsonArray("jars")) {
-            paths.add(element.getAsJsonObject().get("path").getAsString());
+        for (JsonObject entry : metadataJars(jar)) {
+            paths.add(entry.get("path").getAsString());
         }
         return paths;
     }
@@ -152,9 +177,5 @@ abstract class BuildFixture {
 
     protected static void assertFileExists(Path file) {
         assertTrue(Files.isRegularFile(file), "期望文件存在：" + file);
-    }
-
-    protected static void assertEqualsIgnoringOrder(List<String> expected, List<String> actual) {
-        assertEquals(new TreeSet<>(expected), new TreeSet<>(actual), "实际内容：" + actual);
     }
 }

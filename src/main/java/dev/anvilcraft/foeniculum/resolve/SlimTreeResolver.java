@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.gradle.api.GradleException;
 
 /**
  * 把 {@code slimJarJar} 声明的依赖树压平成一层。
@@ -23,10 +24,10 @@ import java.util.Set;
  * 递归得到的是树，但最终内嵌进 jar 的必须是一层：同一模块在不同分支里可能以不同版本区间出现，
  * 必须合并区间并裁决出唯一版本，否则同一个库会被重复打包，而这正是本插件要解决的问题。
  *
- * <p>裁决与展开必须交替进行，但交替方式对正确性很关键。一个模块的版本可能在后续轮次被别的约束改掉，
- * 若把旧版本描述文件里的依赖一直留在约束集合里，那些「已经不再被选中」的版本就会继续收窄下游区间，
- * 甚至凭空造出一个区间为空的冲突。因此每一轮都从当前决策重新推导完整约束集合：
- * 只把「当前选中的那些版本」所声明的依赖算进来。这样约束集合与版本选择始终互相自洽。
+ * <p>裁决与展开必须交替进行，而且「交集为空」不能立刻判定为冲突。一个模块的版本被抬高后，
+ * 旧版本声称的依赖就不再成立；但抬高之前，旧版本声明的约束已经把下游模块的区间压成空集。
+ * 这种空集只是中间状态，强行报错会让一个本来有解的依赖图失败。因此迭代期间遇到空交集时先沿用上一轮的决策，
+ * 让其他模块继续演进；只有在决策真正稳定下来之后仍然存在空交集，才判定为不可调和的版本冲突。
  */
 public final class SlimTreeResolver {
     /** 迭代上限。正常依赖树的深度远小于此值，超出说明版本选择在若干取值之间来回摆动。 */
@@ -39,6 +40,7 @@ public final class SlimTreeResolver {
     private final Set<String> declaredRepositories;
     private final List<String> warnings = new ArrayList<>();
     private final Set<String> warnedRepositories = new LinkedHashSet<>();
+    private final Set<String> warnedFallbacks = new LinkedHashSet<>();
     private final Map<String, List<String>> availableVersions = new LinkedHashMap<>();
     /** 已读取过的描述文件，键为 {@code group:artifact:version}；值为 {@code null} 表示该版本没有描述文件。 */
     private final Map<String, SlimMetadata> metadataCache = new LinkedHashMap<>();
@@ -65,20 +67,30 @@ public final class SlimTreeResolver {
         }
 
         Map<String, String> decisions = Map.of();
-        Map<String, List<Constraint>> constraints = Map.of();
-
         for (int round = 0; round < MAX_ROUNDS; round++) {
-            constraints = constraintsOf(declarations, decisions);
-            Map<String, String> next = decideAll(constraints);
+            Map<String, List<Constraint>> constraints = constraintsOf(declarations, decisions);
+            Map<String, List<Constraint>> conflicts = new LinkedHashMap<>();
+            Map<String, String> next = new LinkedHashMap<>();
+
+            for (Map.Entry<String, List<Constraint>> entry : constraints.entrySet()) {
+                String decided = decide(entry.getKey(), entry.getValue(), decisions.get(entry.getKey()), conflicts);
+                if (decided != null) {
+                    next.put(entry.getKey(), decided);
+                }
+            }
             inspect(next);
 
             if (next.equals(decisions)) {
+                if (!conflicts.isEmpty()) {
+                    Map.Entry<String, List<Constraint>> first = conflicts.entrySet().iterator().next();
+                    throw conflict(first.getKey(), first.getValue());
+                }
                 return new SlimResolution(collect(next, constraints, downloadDirectory), List.copyOf(warnings));
             }
             decisions = next;
         }
 
-        throw new IllegalStateException("瘦身依赖的版本选择在 " + MAX_ROUNDS
+        throw new GradleException("瘦身依赖的版本选择在 " + MAX_ROUNDS
                 + " 轮内没有收敛，说明各库的版本约束互相牵制；请检查是否存在互相要求对方升级的环形依赖");
     }
 
@@ -89,7 +101,7 @@ public final class SlimTreeResolver {
      * 从直接声明与当前选中的版本出发，重新推导完整的约束集合。
      *
      * <p>刻意每轮重建而不是累加：累加会把已不再被选中的版本所声明的依赖留在集合里，
-     * 让下游区间被过期约束收窄。
+     * 让下游区间被过期约束收窄，甚至凭空造出一个空集。
      */
     private Map<String, List<Constraint>> constraintsOf(
             List<SlimDeclaration> declarations, Map<String, String> decisions) {
@@ -104,7 +116,9 @@ public final class SlimTreeResolver {
                     "本项目直接声明");
         }
 
-        for (Map.Entry<String, String> decision : decisions.entrySet()) {
+        List<Map.Entry<String, String>> ordered = new ArrayList<>(decisions.entrySet());
+        ordered.sort(Map.Entry.comparingByKey());
+        for (Map.Entry<String, String> decision : ordered) {
             SlimMetadata metadata = metadataCache.get(decision.getKey() + ":" + decision.getValue());
             if (metadata == null) {
                 continue;
@@ -153,16 +167,24 @@ public final class SlimTreeResolver {
         }
     }
 
-    private Map<String, String> decideAll(Map<String, List<Constraint>> constraints) {
-        Map<String, String> decided = new LinkedHashMap<>();
-        for (Map.Entry<String, List<Constraint>> entry : constraints.entrySet()) {
-            decided.put(entry.getKey(), decide(entry.getKey(), entry.getValue()));
+    /**
+     * 裁决一个模块的版本。
+     *
+     * <p>交集为空时返回上一轮决策并把该模块登记为待定，而不是立刻抛错：空集很可能只是因为
+     * 某个上游模块还没被抬高到不声明这条约束的版本。返回 {@code null} 表示该模块暂时无法裁决。
+     */
+    private String decide(
+            String moduleId,
+            List<Constraint> moduleConstraints,
+            String previousDecision,
+            Map<String, List<Constraint>> conflicts) {
+        VersionRanges.Range intersection;
+        try {
+            intersection = intersect(moduleId, moduleConstraints);
+        } catch (IllegalArgumentException e) {
+            conflicts.put(moduleId, moduleConstraints);
+            return previousDecision;
         }
-        return decided;
-    }
-
-    private String decide(String moduleId, List<Constraint> moduleConstraints) {
-        VersionRanges.Range intersection = intersect(moduleId, moduleConstraints);
 
         List<String> candidates = new ArrayList<>();
         for (Constraint constraint : moduleConstraints) {
@@ -182,11 +204,14 @@ public final class SlimTreeResolver {
         });
         best = highest(available, intersection);
         if (best == null) {
-            throw conflict(moduleId, moduleConstraints);
+            conflicts.put(moduleId, moduleConstraints);
+            return previousDecision;
         }
 
-        warnings.add("模块 " + moduleId + " 在各库中声明的版本都不满足合并后的区间 " + intersection.format()
-                + "，已改用仓库中的 " + best + "；建议统一各库的版本声明");
+        if (warnedFallbacks.add(moduleId + "@" + best)) {
+            warnings.add("模块 " + moduleId + " 在各库中声明的版本都不满足合并后的区间 " + intersection.format()
+                    + "，已改用仓库中的 " + best + "；建议统一各库的版本声明");
+        }
         return best;
     }
 
@@ -195,11 +220,7 @@ public final class SlimTreeResolver {
         for (Constraint constraint : moduleConstraints) {
             ranges.add(VersionRanges.parse(constraint.versionRange(), "模块 " + moduleId + " 的版本约束"));
         }
-        try {
-            return VersionRanges.intersect(ranges);
-        } catch (IllegalArgumentException e) {
-            throw conflict(moduleId, moduleConstraints);
-        }
+        return VersionRanges.intersect(ranges);
     }
 
     private String highest(List<String> candidates, VersionRanges.Range range) {
@@ -243,10 +264,10 @@ public final class SlimTreeResolver {
     private SlimTree collect(
             Map<String, String> decided, Map<String, List<Constraint>> constraints, Path downloadDirectory) {
         List<SlimModule> modules = new ArrayList<>();
-        Set<String> usedFileNames = new LinkedHashSet<>();
+        Map<String, String> usedFileNames = new LinkedHashMap<>();
 
         List<Map.Entry<String, String>> ordered = new ArrayList<>(decided.entrySet());
-        ordered.sort(Comparator.comparing(Map.Entry::getKey));
+        ordered.sort(Map.Entry.comparingByKey());
 
         for (Map.Entry<String, String> entry : ordered) {
             String moduleId = entry.getKey();
@@ -263,17 +284,14 @@ public final class SlimTreeResolver {
             Path artifactFile = slimJar;
             if (!isSlim) {
                 if (!source.download(group, artifact, version, null, standardJar)) {
-                    throw new ModuleConflictException(
-                            moduleId + " " + version,
-                            List.of(new ModuleConflictException.Constraint(
-                                    "[" + version + "]", "构件下载失败，仓库中既没有瘦身包也没有普通 jar")));
+                    throw new GradleException("模块 " + moduleId + " " + version
+                            + " 在任何已声明的仓库中都不存在，既没有瘦身包也没有普通 jar");
                 }
                 artifactFile = standardJar;
                 warnings.add("模块 " + moduleId + " " + version
                         + " 没有发布瘦身包，已改用普通 jar 内嵌；建议该库使用茴香插件发布瘦身包以减小产物体积");
             }
 
-            String fileName = pickFileName(artifact, version, usedFileNames);
             modules.add(new SlimModule(
                     group,
                     artifact,
@@ -282,20 +300,31 @@ public final class SlimTreeResolver {
                     isSlim,
                     JarContents.isObfuscated(artifactFile),
                     relativePath(downloadDirectory, artifactFile),
-                    fileName));
+                    /// 先用与 ModDevGradle 一致的可读命名，冲突时带上 group 区分，避免两个不同 group 的同名模块互相覆盖。
+                    pickFileName(group, artifact, version, moduleId, usedFileNames)));
         }
         return new SlimTree(modules);
     }
 
-    /** 内嵌文件名优先使用 {@code artifact-version.jar}，与 ModDevGradle 原生命名习惯保持一致。 */
-    private String pickFileName(String artifact, String version, Set<String> used) {
-        String candidate = artifact + "-" + version + ".jar";
-        if (used.add(candidate)) {
-            return candidate;
+    private String pickFileName(
+            String group,
+            String artifact,
+            String version,
+            String moduleId,
+            Map<String, String> used) {
+        String simple = artifact + "-" + version + ".jar";
+        if (!used.containsKey(simple)) {
+            used.put(simple, moduleId);
+            return simple;
         }
-        throw new ModuleConflictException(
-                artifact + ":" + version,
-                List.of(new ModuleConflictException.Constraint("[" + version + "]", "内嵌文件名与其他模块重复")));
+        String qualified = group + "-" + simple;
+        if (!used.containsKey(qualified)) {
+            used.put(qualified, moduleId);
+            return qualified;
+        }
+        throw new GradleException("内嵌文件名 " + simple + " 与 " + qualified + " 都已被占用，"
+                + "模块 " + moduleId + " " + version + " 无法内嵌；"
+                + "已占用者：" + used.get(simple) + "、" + used.get(qualified));
     }
 
     private static String relativePath(Path root, Path file) {

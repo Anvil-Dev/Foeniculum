@@ -41,7 +41,7 @@ class JarJarMetadataTest {
 
     private static JsonObject entry(String group, String artifact, String version) {
         SlimModule module = module(group, artifact, version);
-        return JarJarMetadata.entryOf(module, module.fileName());
+        return JarJarMetadata.entryOf(module);
     }
 
     @Test
@@ -106,7 +106,7 @@ class JarJarMetadataTest {
     void 内嵌文件名可被覆盖以避开命名冲突() {
         SlimModule module = module("com.slim", "core", "2.0.0");
 
-        JsonObject entry = JarJarMetadata.entryOf(module, "com.slim-core-2.0.0.jar");
+        JsonObject entry = JarJarMetadata.entryOf(module.withFileName("com.slim-core-2.0.0.jar"));
 
         assertEquals("META-INF/jarjar/com.slim-core-2.0.0.jar", entry.get("path").getAsString());
         assertEquals("com.slim", entry.getAsJsonObject("identifier").get("group").getAsString());

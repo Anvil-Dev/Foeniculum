@@ -6,7 +6,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -30,10 +32,16 @@ import org.gradle.api.tasks.TaskAction;
  * 再把原生任务的输出原样写回」的方式，而不是重新筛选依赖。后者需要重新判定哪些条目属于原生内嵌，
  * 容易在文件名与元数据上产生偏差；前者只需保证原生内容能被完整取回。
  *
+ * <p>只回写原生输出根下 {@code META-INF/jarjar/} 中的文件，与剔除条件对称：主 jar 已经包含该根的全部内容，
+ * 若把根下其他文件也回写一遍，会与主 jar 里的同名条目撞车而以 {@code ZipException} 失败。
+ *
  * <p>项目没有原生内嵌依赖时，输出中不会出现 {@code META-INF/jarjar/} 目录，与原生行为一致。
  */
 @CacheableTask
 public abstract class SlimJar extends DefaultTask {
+    /** 瘦身包内保留的原生内嵌内容前缀，同时也是从主 jar 中剔除的范围。 */
+    private static final String JARJAR_PREFIX = "META-INF/jarjar/";
+
     /** 项目主 jar，瘦身包在它的基础上剔除瘦身内嵌内容。 */
     @InputFile
     @PathSensitive(PathSensitivity.NONE)
@@ -63,15 +71,16 @@ public abstract class SlimJar extends DefaultTask {
             Files.createDirectories(parent);
         }
 
-        List<Path> nativeRoots = nativeRoots();
+        Set<String> written = new LinkedHashSet<>();
         try (ZipFile source = new ZipFile(mainJar.toFile());
                 ZipOutputStream target = new ZipOutputStream(Files.newOutputStream(output))) {
             Enumeration<? extends ZipEntry> entries = source.entries();
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
-                if (entry.getName().startsWith("META-INF/jarjar/")) {
+                if (entry.getName().startsWith(JARJAR_PREFIX) || isSignature(entry.getName())) {
                     continue;
                 }
+                written.add(entry.getName());
                 target.putNextEntry(copyOf(entry));
                 try (var stream = source.getInputStream(entry)) {
                     stream.transferTo(target);
@@ -79,17 +88,38 @@ public abstract class SlimJar extends DefaultTask {
                 target.closeEntry();
             }
 
-            for (Path root : nativeRoots) {
-                for (Path file : listFiles(root)) {
+            for (Path root : nativeRoots()) {
+                for (Path file : jarJarFiles(root)) {
                     // 原生输出目录的布局与 jar 内部布局一致（顶层的 META-INF/jarjar/…），
                     // 主 jar 也是原样把这个目录映射进去的，因此这里同样按相对路径写入，不再额外加前缀。
                     String name = root.relativize(file).toString().replace('\\', '/');
+                    if (!written.add(name)) {
+                        continue;
+                    }
                     target.putNextEntry(new ZipEntry(name));
                     Files.copy(file, target);
                     target.closeEntry();
                 }
             }
         }
+    }
+
+    /**
+     * 判断条目是否为 jar 签名文件。
+     *
+     * <p>瘦身包的内容与主 jar 不同，原样保留签名文件只会得到一份「有签名但验签必然失败」的归档。
+     * 剔除后至少是一个自洽的普通 jar，这也是重新打包类工具的通行做法。
+     */
+    private static boolean isSignature(String name) {
+        if (!name.startsWith("META-INF/")) {
+            return false;
+        }
+        String fileName = name.substring("META-INF/".length());
+        if (fileName.contains("/")) {
+            return false;
+        }
+        String upper = fileName.toUpperCase(java.util.Locale.ROOT);
+        return upper.endsWith(".SF") || upper.endsWith(".RSA") || upper.endsWith(".DSA") || upper.endsWith(".EC");
     }
 
     /**
@@ -102,7 +132,7 @@ public abstract class SlimJar extends DefaultTask {
         List<Path> roots = new ArrayList<>();
         for (var file : getNativeOutputs().getFiles()) {
             Path root = file.toPath();
-            if (Files.isRegularFile(root.resolve("META-INF/jarjar/metadata.json"))) {
+            if (Files.isRegularFile(root.resolve(JARJAR_PREFIX + "metadata.json"))) {
                 roots.add(root);
             }
         }
@@ -117,13 +147,15 @@ public abstract class SlimJar extends DefaultTask {
         return copy;
     }
 
-    private static List<Path> listFiles(Path root) {
-        try (var stream = Files.walk(root)) {
+    /** 列出原生输出根下属于 jarjar 段的文件，并保证顺序稳定以便任务可缓存。 */
+    private static List<Path> jarJarFiles(Path root) {
+        Path jarJarRoot = root.resolve(JARJAR_PREFIX);
+        try (var stream = Files.walk(jarJarRoot)) {
             List<Path> files = new ArrayList<>(stream.filter(Files::isRegularFile).toList());
             files.sort(Comparator.comparing(path -> root.relativize(path).toString()));
             return files;
         } catch (IOException e) {
-            throw new GradleException("无法读取原生 jarJar 输出目录 " + root, e);
+            throw new GradleException("无法读取原生 jarJar 输出目录 " + jarJarRoot, e);
         }
     }
 }

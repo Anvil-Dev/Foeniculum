@@ -1,1 +1,1 @@
-rootProject.name = "foeniculum"
+rootProject.name = "foeniculum-gradle-plugin"

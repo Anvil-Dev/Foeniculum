@@ -6,7 +6,8 @@ plugins {
 group = "dev.anvilcraft.foeniculum"
 version = providers.gradleProperty("mod_version").get()
 base {
-    archivesName = "foeniculum"
+    // 发布的构件名与 Maven 坐标的 artifactId 保持一致，避免按 README 写坐标的使用者解析不到插件。
+    archivesName = "foeniculum-gradle-plugin"
 }
 
 java {
@@ -56,19 +57,7 @@ val functionalTestTask = tasks.register<Test>("functionalTest") {
     group = "verification"
     testClassesDirs = functionalTest.output.classesDirs
     classpath = functionalTest.runtimeClasspath
-    useJUnitPlatform {
-        excludeTags("neoforge")
-    }
-}
-
-tasks.register<Test>("neoforgeIntegrationTest") {
-    description = "Runs functional tests that require downloading a real NeoForge version."
-    group = "verification"
-    testClassesDirs = functionalTest.output.classesDirs
-    classpath = functionalTest.runtimeClasspath
-    useJUnitPlatform {
-        includeTags("neoforge")
-    }
+    useJUnitPlatform()
 }
 
 tasks.named<Test>("test") {
@@ -84,18 +73,9 @@ tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
 }
 
-tasks.withType<Test>().configureEach {
-    systemProperty("foeniculum.version", project.version.toString())
-    // The functional tests resolve their fixtures from a temporary local repository.
-    systemProperty("foeniculum.testkit.repo", layout.buildDirectory.dir("testkit-repo").get().asFile.absolutePath)
-}
-
 publishing {
-    publications {
-        create<MavenPublication>("mavenJava") {
-            from(components["java"])
-        }
-    }
+    // 不手工创建 MavenPublication：java-gradle-plugin 已经提供了 pluginMaven，
+    // 它同样发布 java 组件且 GAV 相同，再建一个会让同一坐标被发布两次。
     repositories {
         val mavenUrl = System.getenv("MAVEN_URL")
         if (mavenUrl != null) {

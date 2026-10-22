@@ -16,7 +16,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -38,9 +40,13 @@ public final class RepositorySlimArtifactSource implements SlimArtifactSource {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
     private static final String METADATA_SUFFIX = "-slim-metadata.json";
 
+    /** 单个仓库出错时最多提示一次，避免依赖树里每个坐标都刷出一条同样的警告。 */
+    private static final int MAX_ACCESS_WARNINGS = 5;
+
     private final List<SlimRepository> repositories;
     private final HttpClient httpClient;
     private final List<String> warnings;
+    private final Set<String> warnedRepositories = new LinkedHashSet<>();
 
     /**
      * @param repositories 按声明顺序尝试的仓库
@@ -59,8 +65,9 @@ public final class RepositorySlimArtifactSource implements SlimArtifactSource {
     public SlimMetadata findMetadata(String group, String artifact, String version) {
         String relative = coordinatePath(group, artifact, version)
                 + "/" + artifact + "-" + version + METADATA_SUFFIX;
+        Lookup lookup = new Lookup("描述文件 " + group + ":" + artifact);
         for (SlimRepository repository : repositories) {
-            byte[] content = readLeniently(repository, relative, "描述文件 " + group + ":" + artifact);
+            byte[] content = lookup.readFrom(this, repository, relative);
             if (content == null) {
                 continue;
             }
@@ -71,14 +78,16 @@ public final class RepositorySlimArtifactSource implements SlimArtifactSource {
                         + relative + "：" + e.getMessage(), e);
             }
         }
+        lookup.failIfAllErrored(group + ":" + artifact, relative);
         return null;
     }
 
     @Override
     public List<String> findVersions(String group, String artifact) {
         String relative = group.replace('.', '/') + "/" + artifact + "/maven-metadata.xml";
+        Lookup lookup = new Lookup("版本列表 " + group + ":" + artifact);
         for (SlimRepository repository : repositories) {
-            byte[] content = readLeniently(repository, relative, "版本列表 " + group + ":" + artifact);
+            byte[] content = lookup.readFrom(this, repository, relative);
             if (content == null) {
                 continue;
             }
@@ -87,7 +96,63 @@ public final class RepositorySlimArtifactSource implements SlimArtifactSource {
                 return versions;
             }
         }
+        lookup.failIfAllErrored(group + ":" + artifact, relative);
         return List.of();
+    }
+
+    /**
+     * 依次查询各仓库时累积的错误，以及「是否有仓库明确回答不存在」。
+     *
+     * <p>「某个仓库出错就换下一个」是必要的：真实仓库对不存在的构件常返回 401、403 或直接断开连接，
+     * 而这些仓库在这个坐标上根本没有内容。但如果全部仓库都以错误收场，就完全无法判断该模块是否存在，
+     * 此时把「读不到」当成「不存在」会让解析器把该模块误判为叶子，产物静默缺少它的传递依赖。
+     * 因此只有「至少一个仓库明确回答不存在」时才可以安全地当作叶子，否则把各仓库的错误一并报告出来。
+     */
+    private final class Lookup {
+        private final String what;
+        private final List<String> failures = new ArrayList<>();
+        private boolean definitelyAbsent;
+
+        private Lookup(String what) {
+            this.what = what;
+        }
+
+        private byte[] readFrom(
+                RepositorySlimArtifactSource source, SlimRepository repository, String relative) {
+            try {
+                byte[] content = source.read(repository, relative);
+                if (content == null) {
+                    definitelyAbsent = true;
+                }
+                return content;
+            } catch (RuntimeException e) {
+                failures.add(repository.url() + "：" + e.getMessage());
+                source.warnAccessFailure(repository, what, e.getMessage());
+                return null;
+            }
+        }
+
+        private void failIfAllErrored(String moduleId, String relative) {
+            if (definitelyAbsent || failures.isEmpty()) {
+                return;
+            }
+            throw new IllegalStateException("无法从任何已声明的仓库读取模块 " + moduleId + " 的 " + relative + "：\n  - "
+                    + String.join("\n  - ", failures));
+        }
+    }
+
+    /**
+     * 记录一次仓库访问失败，但同一个仓库只提示一次。
+     *
+     * <p>依赖树里的每个坐标都会遍历全部仓库，若每次都提示，一个有几十个模块的项目会刷出上百行重复内容，
+     * 反而淹没真正需要关注的告警。
+     */
+    private void warnAccessFailure(SlimRepository repository, String what, String reason) {
+        if (warnedRepositories.size() >= MAX_ACCESS_WARNINGS || !warnedRepositories.add(repository.url())) {
+            return;
+        }
+        warnings.add("读取 " + what + " 时仓库 " + repository.url() + " 返回错误，已跳过该仓库："
+                + reason + "；若解析结果缺少内容，请检查该仓库的可用性");
     }
 
     @Override
@@ -134,21 +199,6 @@ public final class RepositorySlimArtifactSource implements SlimArtifactSource {
 
     private static String coordinatePath(String group, String artifact, String version) {
         return group.replace('.', '/') + "/" + artifact + "/" + version;
-    }
-
-    /**
-     * 探测一个可选的仓库文件。
-     *
-     * @return 文件内容；该仓库中不存在或访问失败时返回 {@code null}，后者会记录到警告中
-     */
-    private byte[] readLeniently(SlimRepository repository, String relative, String what) {
-        try {
-            return read(repository, relative);
-        } catch (RuntimeException e) {
-            warnings.add("读取 " + what + " 时仓库 " + repository.url() + " 返回错误，已跳过该仓库；"
-                    + "若解析结果缺少内容，请检查该仓库的可用性：" + e.getMessage());
-            return null;
-        }
     }
 
     /**

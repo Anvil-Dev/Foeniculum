@@ -104,11 +104,9 @@ public record JarJarMetadata(List<JsonObject> jars) {
     /**
      * 为一个内嵌模块构造 FML 标准条目。
      *
-     * @param module 扁平化后的模块
-     * @param fileName 实际写入 {@code META-INF/jarjar/} 的文件名；可能与模块自带的名字不同，
-     *     因为它需要避开与原生内嵌文件的命名冲突
+     * @param module 扁平化后的模块，其文件名已是最终写入 {@code META-INF/jarjar/} 的名字
      */
-    public static JsonObject entryOf(SlimModule module, String fileName) {
+    public static JsonObject entryOf(SlimModule module) {
         JsonObject identifier = new JsonObject();
         identifier.addProperty("group", module.group());
         identifier.addProperty("artifact", module.artifact());
@@ -120,7 +118,7 @@ public record JarJarMetadata(List<JsonObject> jars) {
         JsonObject entry = new JsonObject();
         entry.add("identifier", identifier);
         entry.add("version", version);
-        entry.addProperty("path", "META-INF/jarjar/" + fileName);
+        entry.addProperty("path", module.embeddedPath());
         entry.addProperty("isObfuscated", module.isObfuscated());
         return entry;
     }

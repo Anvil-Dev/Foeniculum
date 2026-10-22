@@ -118,15 +118,7 @@ class SlimJarJarFunctionalTest extends BuildFixture {
         run(root, "jar");
 
         Path jar = project.resolve("build/libs/demo-1.2.3.jar");
-        JsonObject metadata = entryJson(jar, "META-INF/jarjar/metadata.json");
-
-        JsonObject shared = null;
-        for (var element : metadata.getAsJsonArray("jars")) {
-            JsonObject entry = element.getAsJsonObject();
-            if ("shared".equals(entry.getAsJsonObject("identifier").get("artifact").getAsString())) {
-                shared = entry;
-            }
-        }
+        JsonObject shared = metadataEntry(jar, "com.example:shared");
         assertTrue(shared != null, "元数据中应包含 shared 模块");
 
         assertEquals("2.0.0", shared.getAsJsonObject("version").get("artifactVersion").getAsString());
@@ -228,6 +220,21 @@ class SlimJarJarFunctionalTest extends BuildFixture {
     }
 
     @Test
+    void 被混淆的内嵌模块在元数据中被标记() throws IOException {
+        repository.publish(Module.builder("com.example", "obfuscated-lib", "1.0.0")
+                .obfuscated()
+                .build());
+        writeBuildFile(root, buildScript().replace(
+                "slimJarJar 'com.example:top:1.0.0'", "slimJarJar 'com.example:obfuscated-lib:1.0.0'"));
+
+        run(root, "jar");
+
+        JsonObject entry = metadataEntry(project.resolve("build/libs/demo-1.2.3.jar"), "com.example:obfuscated-lib");
+        assertTrue(entry != null, "元数据中应包含被混淆的模块");
+        assertTrue(entry.get("isObfuscated").getAsBoolean(), "清单含 Obfuscated-By 时应标记为已混淆");
+    }
+
+    @Test
     void 关闭自动挂载后发布不再包含瘦身构件() throws IOException {
         writeBuildFile(root, buildScript().replace(
                 "dependencies {", "foeniculum { autoAttachPublishing = false }\n\ndependencies {"));
@@ -240,5 +247,34 @@ class SlimJarJarFunctionalTest extends BuildFixture {
         assertFalse(
                 Files.exists(published.resolve("demo-1.2.3-slim-metadata.json")),
                 "关闭自动挂载后不应发布描述文件");
+    }
+
+    @Test
+    void 声明无法解析的坐标时构建失败而不是静默丢弃() throws IOException {
+        writeBuildFile(root, buildScript().replace(
+                "slimJarJar 'com.example:top:1.0.0'", "slimJarJar 'com.example:not-published:9.9.9'"));
+
+        BuildResult result = runExpectingFailure(root, "jar");
+
+        assertTrue(result.getOutput().contains("com.example:not-published"), result.getOutput());
+        assertTrue(result.getOutput().contains("无法解析"), result.getOutput());
+    }
+
+    @Test
+    void 同一模块被重复声明时描述文件只记一条并取区间交集() throws IOException {
+        writeBuildFile(root, buildScript().replace(
+                "slimJarJar 'com.example:top:1.0.0'",
+                "slimJarJar 'com.example:top:1.0.0'\n    slimJarJar 'com.example:top:[1.0.0,2.0.0)'"));
+
+        run(root, "slimMetadata");
+
+        Path metadata = project.resolve("build/foeniculum/publish/demo-1.2.3-slim-metadata.json");
+        JsonObject json = JsonParser.parseString(Files.readString(metadata, StandardCharsets.UTF_8))
+                .getAsJsonObject();
+
+        assertEquals(1, json.getAsJsonArray("dependencies").size(), "同一模块只应记录一条");
+        assertEquals(
+                "[1.0.0,2.0.0)",
+                json.getAsJsonArray("dependencies").get(0).getAsJsonObject().get("versionRange").getAsString());
     }
 }

@@ -1,7 +1,6 @@
 package dev.anvilcraft.foeniculum.resolve;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.jar.Attributes;
 import java.util.jar.JarFile;
@@ -11,6 +10,9 @@ import java.util.jar.Manifest;
  * 读取 jar 的内容特征，用于生成 FML 元数据里茴香无法从依赖声明获知的字段。
  */
 public final class JarContents {
+    /** FML 用来标记内嵌库需要映射转换的清单属性名。 */
+    private static final Attributes.Name OBFUSCATED_BY = new Attributes.Name("Obfuscated-By");
+
     private JarContents() {}
 
     /**
@@ -28,8 +30,10 @@ public final class JarContents {
             if (manifest == null) {
                 return false;
             }
+            // 清单属性的键是 Attributes.Name 而不是 String；直接传字符串会与 Name 的 equals 不匹配，
+            // 导致这里永远判定为未混淆，进而让 FML 跳过本该执行的映射转换。
             Attributes attributes = manifest.getMainAttributes();
-            return attributes.containsKey("Obfuscated-By");
+            return attributes.getValue(OBFUSCATED_BY) != null;
         } catch (IOException e) {
             throw new IllegalStateException("无法读取 jar 文件以判定是否混淆：" + jar, e);
         }

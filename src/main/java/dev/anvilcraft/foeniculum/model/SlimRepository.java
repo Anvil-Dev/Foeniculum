@@ -23,28 +23,16 @@ public record SlimRepository(String url, String username, String password) imple
         }
     }
 
-    public static SlimRepository anonymous(String url) {
-        return new SlimRepository(url, null, null);
-    }
-
     public boolean hasCredentials() {
         return username != null && !username.isEmpty();
     }
 
     /**
-     * 写进描述文件的仓库地址：规范化且去掉末尾斜杠。
-     *
-     * <p>同一仓库由不同写法声明时（例如 {@code file:/C:/repo} 与 {@code file:///C:/repo}），
-     * 只有统一形式下游才能正确比对，否则会误报“未声明的仓库”。
-     */
-    public String normalizedUrl() {
-        return normalize(url);
-    }
-
-    /**
      * 比较与输出共用的规范化地址：协议与主机名小写、去掉末尾斜杠，{@code file:} 地址统一为绝对路径形式。
      *
-     * <p>路径部分保持原样，因为 Maven 仓库路径区分大小写，统一转小写会造成误判。
+     * <p>同一仓库由不同写法声明时（例如 {@code file:/C:/repo} 与 {@code file:///C:/repo}），
+     * 只有统一形式下游才能正确比对，否则会误报「未声明的仓库」。路径部分保持原样，
+     * 因为 Maven 仓库路径区分大小写，统一转小写会造成误判。
      */
     public static String normalize(String rawUrl) {
         String trimmed = rawUrl.trim();
@@ -60,12 +48,18 @@ public record SlimRepository(String url, String username, String password) imple
         }
 
         if ("file".equalsIgnoreCase(uri.getScheme())) {
-            Path path = Path.of(uri).toAbsolutePath().normalize();
-            String normalized = path.toUri().toString();
-            while (normalized.endsWith("/")) {
-                normalized = normalized.substring(0, normalized.length() - 1);
+            // file:C:/repo 这类非层级写法无法直接转成 Path；退回到原始字符串，
+            // 让差异提示仍能工作，而不是在比对仓库时抛出一个与真实原因无关的异常。
+            try {
+                Path path = Path.of(uri).toAbsolutePath().normalize();
+                String normalized = path.toUri().toString();
+                while (normalized.endsWith("/")) {
+                    normalized = normalized.substring(0, normalized.length() - 1);
+                }
+                return normalized;
+            } catch (IllegalArgumentException e) {
+                return trimmed;
             }
-            return normalized;
         }
 
         if (uri.getScheme() == null || uri.getHost() == null) {

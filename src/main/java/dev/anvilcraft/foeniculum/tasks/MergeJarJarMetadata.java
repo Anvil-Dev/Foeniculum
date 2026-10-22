@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import dev.anvilcraft.foeniculum.model.JarJarMetadata;
 import dev.anvilcraft.foeniculum.model.SlimModule;
 import dev.anvilcraft.foeniculum.model.SlimTree;
+import dev.anvilcraft.foeniculum.version.VersionRanges;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
@@ -82,21 +83,25 @@ public abstract class MergeJarJarMetadata extends DefaultTask {
         List<JsonObject> slimEntries = new ArrayList<>();
         for (SlimModule module : tree.modules()) {
             if (nativeModuleIds.contains(module.moduleId())) {
+                verifyNativeVersion(module, nativeEntries);
                 getLogger().warn("[茴香] 模块 {} 已由原生 jarJar 内嵌，瘦身侧的同名条目已被忽略", module.moduleId());
                 continue;
             }
-            String fileName = embeddedFileName(module, nativeFileNames);
-            if (!nativeFileNames.add(fileName)) {
-                throw new GradleException("内嵌文件名 " + fileName + " 被模块 " + module.moduleId()
+            SlimModule embedded = module;
+            if (nativeFileNames.contains(module.fileName())) {
+                embedded = module.withFileName(module.group() + "-" + module.fileName());
+            }
+            if (!nativeFileNames.add(embedded.fileName())) {
+                throw new GradleException("内嵌文件名 " + embedded.fileName() + " 被模块 " + module.moduleId()
                         + " 重复使用；请检查各库的 artifact 与版本是否冲突");
             }
-            slimEntries.add(JarJarMetadata.entryOf(module, fileName));
+            slimEntries.add(JarJarMetadata.entryOf(embedded));
             Path source = resolveDirectory.resolve("artifacts").resolve(module.sourcePath());
             if (!Files.isRegularFile(source)) {
                 throw new GradleException("找不到模块 " + module.moduleId() + " " + module.version()
                         + " 的构件文件 " + source);
             }
-            Files.copy(source, output.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(source, output.resolve(embedded.fileName()), StandardCopyOption.REPLACE_EXISTING);
         }
 
         if (slimEntries.isEmpty()) {
@@ -114,17 +119,32 @@ public abstract class MergeJarJarMetadata extends DefaultTask {
     }
 
     /**
-     * 为瘦身模块挑一个不与原生命中冲突的内嵌文件名。
+     * 校验原生内嵌的版本是否满足瘦身侧对该模块声明的区间。
      *
-     * <p>先在 {@code artifact-version.jar} 上尝试，冲突时用 {@code group-artifact-version.jar}，
-     * 这既保持了与 ModDevGradle 一致的可读性，又不会让两个来自不同 group 的同名模块互相覆盖。
+     * <p>去重时保留原生侧，但若原生内嵌的版本落在瘦身侧要求的区间之外，运行时 FML 会拿瘦身侧的区间去比对
+     * 实际内嵌的版本并报 Jar-in-Jar 冲突。与其让使用者在启动时才发现，不如在构建期就失败并指出两侧的取值。
      */
-    private static String embeddedFileName(SlimModule module, Set<String> nativeFileNames) {
-        String candidate = module.fileName();
-        if (!nativeFileNames.contains(candidate)) {
-            return candidate;
+    private void verifyNativeVersion(SlimModule module, List<JsonObject> nativeEntries) {
+        for (JsonObject entry : nativeEntries) {
+            if (!JarJarMetadata.moduleIdOf(entry).equals(module.moduleId())) {
+                continue;
+            }
+            String nativeVersion = entry.getAsJsonObject("version").get("artifactVersion").getAsString();
+            VersionRanges.Range required;
+            try {
+                required = VersionRanges.parse(module.versionRange(), "模块 " + module.moduleId());
+            } catch (IllegalArgumentException e) {
+                throw new GradleException("模块 " + module.moduleId() + " 的瘦身侧版本区间无法解析："
+                        + module.versionRange(), e);
+            }
+            if (!VersionRanges.contains(required, nativeVersion)) {
+                throw new GradleException("模块 " + module.moduleId() + " 既被原生 jarJar 内嵌为 " + nativeVersion
+                        + "，又被瘦身侧要求为 " + required.format() + "。"
+                        + "原生内嵌优先会导致运行时 Jar-in-Jar 版本冲突；"
+                        + "请把 jarJar 声明的版本调整到该区间内，或去掉其中一侧的声明");
+            }
+            return;
         }
-        return module.group() + "-" + candidate;
     }
 
     private Path findNativeMetadata() {

@@ -166,6 +166,10 @@ public final class LocalMavenRepository {
 
         /** 模块构建器，让测试数据保持可读。 */
         public static final class Builder {
+            private static final String PLAIN_MANIFEST = "Manifest-Version: 1.0\n\n";
+            private static final String OBFUSCATED_MANIFEST =
+                    "Manifest-Version: 1.0\nObfuscated-By: test\n\n";
+
             private final String group;
             private final String artifact;
             private final String version;
@@ -179,7 +183,7 @@ public final class LocalMavenRepository {
                 this.group = group;
                 this.artifact = artifact;
                 this.version = version;
-                this.jarEntries.put("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n");
+                this.jarEntries.put("META-INF/MANIFEST.MF", PLAIN_MANIFEST);
                 this.jarEntries.put(artifact + "/" + artifact + ".class", "class");
             }
 
@@ -188,21 +192,20 @@ public final class LocalMavenRepository {
                 return this;
             }
 
+            /**
+             * 让该模块的清单带上 {@code Obfuscated-By}，用于验证内嵌条目正确标记了混淆状态。
+             *
+             * <p>普通 jar 与瘦身包都要改：解析时优先取瘦身包，只改其一会让这项判定落空。
+             */
             public Builder obfuscated() {
-                jarEntries.put("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nObfuscated-By: test\n");
+                jarEntries.put("META-INF/MANIFEST.MF", OBFUSCATED_MANIFEST);
+                slimJarEntries = new LinkedHashMap<>();
+                slimJarEntries.put("META-INF/MANIFEST.MF", OBFUSCATED_MANIFEST);
                 return this;
             }
 
             public Builder entry(String name, String content) {
                 jarEntries.put(name, content);
-                return this;
-            }
-
-            public Builder slimEntry(String name, String content) {
-                if (slimJarEntries == null) {
-                    slimJarEntries = new LinkedHashMap<>();
-                }
-                slimJarEntries.put(name, content);
                 return this;
             }
 
@@ -218,7 +221,7 @@ public final class LocalMavenRepository {
 
             public Module build() {
                 Map<String, String> slimEntries = slimJarEntries == null
-                        ? Map.of("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+                        ? Map.of("META-INF/MANIFEST.MF", PLAIN_MANIFEST)
                         : Map.copyOf(slimJarEntries);
                 return new Module(
                         group,

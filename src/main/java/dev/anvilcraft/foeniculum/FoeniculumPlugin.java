@@ -1,7 +1,6 @@
 package dev.anvilcraft.foeniculum;
 
 import dev.anvilcraft.foeniculum.model.SlimDeclaration;
-import dev.anvilcraft.foeniculum.model.SlimDependency;
 import dev.anvilcraft.foeniculum.model.SlimRepository;
 import dev.anvilcraft.foeniculum.tasks.MergeJarJarMetadata;
 import dev.anvilcraft.foeniculum.tasks.ResolveSlimJarJar;
@@ -19,6 +18,7 @@ import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentSelector;
 import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
 import org.gradle.api.artifacts.result.ResolvedDependencyResult;
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskProvider;
@@ -141,6 +141,13 @@ public class FoeniculumPlugin implements Plugin<Project> {
 
             List<SlimDeclaration> declarations = new ArrayList<>();
             for (var result : root.getDependencies()) {
+                if (result instanceof UnresolvedDependencyResult unresolved) {
+                    // 解析失败绝不能静默跳过：跳过后构建仍会成功，但产物里缺了这个依赖，
+                    // 描述文件还会声称它不存在，问题只能推迟到运行时变成找不到类。
+                    throw new GradleException("slimJarJar 声明的依赖 " + unresolved.getRequested().getDisplayName()
+                            + " 无法解析：" + unresolved.getFailure().getMessage(),
+                            unresolved.getFailure());
+                }
                 if (!(result instanceof ResolvedDependencyResult resolved)) {
                     continue;
                 }

@@ -50,8 +50,14 @@ public record SlimModule(
         return group + ":" + artifact;
     }
 
-    /** FML 元数据中记录的 {@code path} 字段取值。 */
+    /** FML 元数据中记录的 {@code path} 字段取值，即模块在 jar 内部的实际位置。 */
     public String embeddedPath() {
         return "META-INF/jarjar/" + fileName;
+    }
+
+    /** 换一个内嵌文件名，用于避开与原生命中或其他模块的命名冲突。 */
+    public SlimModule withFileName(String newFileName) {
+        return new SlimModule(
+                group, artifact, version, versionRange, isSlim, isObfuscated, sourcePath, newFileName);
     }
 }

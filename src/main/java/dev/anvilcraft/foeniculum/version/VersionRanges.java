@@ -1,6 +1,7 @@
 package dev.anvilcraft.foeniculum.version;
 
 import java.util.Collection;
+import java.util.Locale;
 import java.util.Objects;
 import org.apache.maven.artifact.versioning.ArtifactVersion;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
@@ -188,12 +189,17 @@ public final class VersionRanges {
     }
 
     private static boolean isDynamic(String spec) {
-        if (spec.startsWith("latest.")) {
+        // Maven 的 RELEASE/LATEST 与 1.+、latest.release 同属动态版本：解析结果取决于仓库当时的内容，
+        // 而描述文件必须能唯一确定版本，否则下游每次构建都可能得到不同的树。
+        String upper = spec.toUpperCase(Locale.ROOT);
+        if (upper.equals("RELEASE") || upper.equals("LATEST") || spec.startsWith("latest.")) {
             return true;
         }
         for (String part : spec.split(",")) {
             String trimmed = part.replace("[", "").replace("]", "").replace("(", "").replace(")", "").trim();
-            if (trimmed.endsWith("+") || trimmed.startsWith("latest.")) {
+            if (trimmed.endsWith("+") || trimmed.toUpperCase(Locale.ROOT).equals("RELEASE")
+                    || trimmed.toUpperCase(Locale.ROOT).equals("LATEST")
+                    || trimmed.startsWith("latest.")) {
                 return true;
             }
         }
