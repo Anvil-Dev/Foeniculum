@@ -73,7 +73,8 @@ public class FoeniculumPlugin implements Plugin<Project> {
                     task.getMergeDirectory().convention(
                             project.getLayout().getBuildDirectory().dir("foeniculum/jarjar"));
                     task.getNativeOutputs().from(nativeOutput(project));
-                    task.getResolveDirectory().set(resolveTask.flatMap(ResolveSlimJarJar::getResolveDirectory));                });
+                    task.getResolveDirectory().set(resolveTask.flatMap(ResolveSlimJarJar::getResolveDirectory));
+                });
 
         // 主 jar 只追加“合并后的元数据与瘦身内嵌文件”；原生内嵌文件已由 ModDevGradle 自己接进 jar，
         // 因此这里再排除原生那份元数据，避免同一路径下出现两份。
