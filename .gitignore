@@ -1,0 +1,29 @@
+# Gradle
+.gradle/
+build/
+out/
+.kotlin/
+
+# 保留 Gradle Wrapper 的 jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Java
+*.class
+*.hprof
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# 运行与本地数据
+run/
+local.properties
+*.log
+
+# 操作系统
+.DS_Store
+Thumbs.db

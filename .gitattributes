@@ -1,0 +1,14 @@
+# 统一按 LF 存放，避免不同平台的 CRLF 转换让 diff 与校验失真。
+* text=auto eol=lf
+
+# Gradle Wrapper 的批处理脚本必须是 CRLF，否则 Windows 上可能无法执行。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Wrapper 的 jar 是二进制，不得做行尾转换。
+*.jar binary
+
+# 归档与模型文件按二进制处理。
+*.png binary
+*.jpg binary
+*.zip binary

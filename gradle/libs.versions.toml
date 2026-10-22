@@ -1,0 +1,11 @@
+[versions]
+gson = "2.13.1"
+mavenArtifact = "3.9.16"
+junit = "5.13.4"
+
+[libraries]
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+maven-artifact = { module = "org.apache.maven:maven-artifact", version.ref = "mavenArtifact" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
