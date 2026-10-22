@@ -105,10 +105,18 @@ dependencies {
       "version": { "range": "[1.0.0,)", "artifactVersion": "1.0.0" },
       "path": "META-INF/jarjar/legacy-lib-1.0.0.jar",
       "isObfuscated": false
+    },
+    {
+      "identifier": { "group": "com.example.lib", "artifact": "core-lib" },
+      "version": { "range": "[2.0.0,3.0.0)", "artifactVersion": "2.0.1" },
+      "path": "META-INF/jarjar/core-lib-2.0.1-slim.jar",
+      "isObfuscated": false
     }
   ]
 }
 ```
+
+原生命中沿用 MDG 的文件名；茴香内嵌的文件名带 `-slim` 后缀（回退到普通 jar 时则不带），让人一眼看出某个内嵌包是「分支」还是普通 jar。若两个不同 group 的同名同版本模块撞名，解析阶段会再加上 group 前缀区分。
 
 合并规则是确定的：原生 `jarJar` 的条目原样保留且顺序不变，瘦身条目追加在其后，按 `group:artifact` 排序；同一个 `group:artifact` 若同时出现在两侧，保留原生侧并输出一条 Gradle 警告。这条警告是提示而非错误，因为原生声明是项目显式写下的，应当拥有更高优先级。
 

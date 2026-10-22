@@ -300,19 +300,26 @@ public final class SlimTreeResolver {
                     isSlim,
                     JarContents.isObfuscated(artifactFile),
                     relativePath(downloadDirectory, artifactFile),
-                    /// 先用与 ModDevGradle 一致的可读命名，冲突时带上 group 区分，避免两个不同 group 的同名模块互相覆盖。
-                    pickFileName(group, artifact, version, moduleId, usedFileNames)));
+                    embeddedFileName(group, artifact, version, isSlim, moduleId, usedFileNames)));
         }
         return new SlimTree(modules);
     }
 
-    private String pickFileName(
+    /**
+     * 决定模块在 {@code META-INF/jarjar/} 下的文件名。
+     *
+     * <p>带上 {@code -slim} 后缀以表明这是瘦身构件，让产物里能直接看出某个内嵌包是「分支」还是普通 jar；
+     * 与 GroupId 冲突时再加上 group 前缀。两份都占用说明存在同名同版本的不同 group，只有再加限定才能区分。
+     */
+    private String embeddedFileName(
             String group,
             String artifact,
             String version,
+            boolean isSlim,
             String moduleId,
             Map<String, String> used) {
-        String simple = artifact + "-" + version + ".jar";
+        String suffix = isSlim ? "-slim.jar" : ".jar";
+        String simple = artifact + "-" + version + suffix;
         if (!used.containsKey(simple)) {
             used.put(simple, moduleId);
             return simple;

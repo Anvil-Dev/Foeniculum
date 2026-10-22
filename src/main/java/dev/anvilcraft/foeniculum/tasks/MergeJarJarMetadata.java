@@ -87,14 +87,17 @@ public abstract class MergeJarJarMetadata extends DefaultTask {
                 getLogger().warn("[茴香] 模块 {} 已由原生 jarJar 内嵌，瘦身侧的同名条目已被忽略", module.moduleId());
                 continue;
             }
+            // 模块之间的重名已由解析阶段处理，这里只剩与原生内嵌文件的重名，加 group 前缀即可避开。
             SlimModule embedded = module;
             if (nativeFileNames.contains(module.fileName())) {
                 embedded = module.withFileName(module.group() + "-" + module.fileName());
             }
-            if (!nativeFileNames.add(embedded.fileName())) {
-                throw new GradleException("内嵌文件名 " + embedded.fileName() + " 被模块 " + module.moduleId()
-                        + " 重复使用；请检查各库的 artifact 与版本是否冲突");
+            if (nativeFileNames.contains(embedded.fileName())) {
+                throw new GradleException("内嵌文件名 " + embedded.fileName() + " 与原生 jarJar 的内嵌文件重名，"
+                        + "模块 " + module.moduleId() + " " + module.version() + " 无法内嵌；"
+                        + "请调整该模块的 group 或 artifact");
             }
+            nativeFileNames.add(embedded.fileName());
             slimEntries.add(JarJarMetadata.entryOf(embedded));
             Path source = resolveDirectory.resolve("artifacts").resolve(module.sourcePath());
             if (!Files.isRegularFile(source)) {

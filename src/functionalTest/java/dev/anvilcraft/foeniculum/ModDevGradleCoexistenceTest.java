@@ -166,10 +166,10 @@ class ModDevGradleCoexistenceTest extends BuildFixture {
 
         // 瘦身内容不应出现在瘦身包里，它们只存在于描述文件中。
         assertFalse(
-                entries(slimJar).contains("META-INF/jarjar/slim-lib-1.0.0.jar"),
+                entries(slimJar).contains("META-INF/jarjar/slim-lib-1.0.0-slim.jar"),
                 "瘦身包不应包含由 slimJarJar 引入的模块");
         assertFalse(
-                entries(slimJar).contains("META-INF/jarjar/slim-only-1.0.0.jar"),
+                entries(slimJar).contains("META-INF/jarjar/slim-only-1.0.0-slim.jar"),
                 "瘦身包不应包含由 slimJarJar 引入的模块");
         assertContains(slimJar, "com/demo/Demo.class");
     }
