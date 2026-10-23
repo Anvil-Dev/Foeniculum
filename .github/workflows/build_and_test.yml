@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: false
+      version_suffix:
+        description: '追加在 mod_version 之后的版本后缀，非正式发布用它避免同版本重复上传'
+        required: false
+        type: string
+        default: ''
     secrets:
       maven_url:
         description: '私有 Maven 仓库地址'
@@ -57,11 +62,11 @@ jobs:
 
       # functionalTest 里有真实应用 ModDevGradle 的用例，需要访问 NeoForged 仓库。
       - name: Build
-        run: ./gradlew build --stacktrace
+        run: ./gradlew build --stacktrace ${{ inputs.version_suffix != '' && format('-Pversion_suffix={0}', inputs.version_suffix) || '' }}
 
       - name: Publish to private Maven
         if: ${{ env.PUBLISH_PRIVATE_MAVEN == 'true' }}
-        run: ./gradlew publish --stacktrace
+        run: ./gradlew publish --stacktrace ${{ inputs.version_suffix != '' && format('-Pversion_suffix={0}', inputs.version_suffix) || '' }}
         env:
           MAVEN_URL: ${{ secrets.maven_url }}
           MAVEN_USERNAME: ${{ secrets.maven_user }}
@@ -69,7 +74,7 @@ jobs:
 
       # Maven Central 的发布由调用方在 release 流程里单独触发，这里只把 staging 内容留作构建产物。
       - name: Stage for Maven Central
-        run: ./gradlew publishAllPublicationsToStagingRepository --stacktrace
+        run: ./gradlew publishAllPublicationsToStagingRepository --stacktrace ${{ inputs.version_suffix != '' && format('-Pversion_suffix={0}', inputs.version_suffix) || '' }}
 
       - name: Upload staging artifacts
         uses: actions/upload-artifact@v7

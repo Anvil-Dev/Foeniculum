@@ -24,6 +24,8 @@ jobs:
     uses: ./.github/workflows/build_and_test.yml
     with:
       pr_build: false
+      # 每次推送都用运行编号作后缀，既有唯一的开发版本可回溯，也避免私有仓库因同版本重复上传返回 409。
+      version_suffix: dev.${{ github.run_number }}
     secrets:
       maven_url: ${{ secrets.MAVEN_URL }}
       maven_user: ${{ secrets.MAVEN_USER }}

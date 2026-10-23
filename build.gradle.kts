@@ -5,7 +5,10 @@ plugins {
 }
 
 group = "dev.anvilcraft.resource"
-version = providers.gradleProperty("mod_version").get()
+// mod_version 是发布用的正式版本。CI 上重复推送同一版本会被私有仓库以 409 拒绝，
+// 因此由工作流通过 -Pversion_suffix 传入构建号，得到 0.1.0-<构建号> 这样的开发快照版本。
+version = providers.gradleProperty("mod_version").get() +
+    providers.gradleProperty("version_suffix").orNull?.let { "-$it" }.orEmpty()
 base {
     // 发布的构件名与 Maven 坐标的 artifactId 保持一致，避免按 README 写坐标的使用者解析不到插件。
     archivesName = "foeniculum-gradle-plugin"
