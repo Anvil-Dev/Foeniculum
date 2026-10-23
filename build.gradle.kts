@@ -3,7 +3,7 @@ plugins {
     `maven-publish`
 }
 
-group = "dev.anvilcraft.foeniculum"
+group = "dev.anvilcraft.resource"
 version = providers.gradleProperty("mod_version").get()
 base {
     // 发布的构件名与 Maven 坐标的 artifactId 保持一致，避免按 README 写坐标的使用者解析不到插件。
@@ -43,8 +43,8 @@ dependencies {
 gradlePlugin {
     plugins {
         create("foeniculum") {
-            id = "dev.anvilcraft.foeniculum"
-            implementationClass = "dev.anvilcraft.foeniculum.FoeniculumPlugin"
+            id = "dev.anvilcraft.resource.foeniculum"
+            implementationClass = "dev.anvilcraft.resource.foeniculum.FoeniculumPlugin"
             displayName = "Foeniculum"
             description = "Slims and flattens ModDevGradle jar-in-jar dependencies across a multi-module dependency tree."
         }

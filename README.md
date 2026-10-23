@@ -1,6 +1,6 @@
 # 茴香（Foeniculum）
 
-「茴香」（Foeniculum）是一个 ModDevGradle（简称 MDG）的配套 Gradle 插件，插件 id 为 `dev.anvilcraft.foeniculum`，Maven 坐标为 `dev.anvilcraft.foeniculum:foeniculum-gradle-plugin`，以 GNU LGPL 3.0 发布。
+「茴香」（Foeniculum）是一个 ModDevGradle（简称 MDG）的配套 Gradle 插件，插件 id 为 `dev.anvilcraft.resource.foeniculum`，Maven 坐标为 `dev.anvilcraft.resource:foeniculum-gradle-plugin`，以 GNU LGPL 3.0 发布。
 
 它引入一套名为 `slimJarJar` 的机制：让库以「瘦身包 + 独立描述文件」的形式发布，由顶层项目递归读取描述文件，把整棵依赖树压平成一层，再与原生 `jarJar` 的内嵌内容一起写入主 jar 的标准 FML 元数据。整个过程不改变、也不干扰 MDG 原生 `jarJar` 的行为。
 
@@ -35,7 +35,7 @@ plugins {
     id 'java-library'
     id 'maven-publish'
     id 'net.neoforged.moddev' version '<MDG 版本>'
-    id 'dev.anvilcraft.foeniculum' version '<茴香版本>'
+    id 'dev.anvilcraft.resource.foeniculum' version '<茴香版本>'
 }
 
 foeniculum {
