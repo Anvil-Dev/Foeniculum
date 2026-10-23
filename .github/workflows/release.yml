@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # 先跑完整构建与测试：发布出去的产物必须是通过校验的那一份。
+  build:
+    name: Build and Test
+    uses: ./.github/workflows/build_and_test.yml
+    with:
+      pr_build: false
+    secrets:
+      maven_url: ${{ secrets.MAVEN_URL }}
+      maven_user: ${{ secrets.MAVEN_USER }}
+      maven_pass: ${{ secrets.MAVEN_PASS }}
+
+  # 私有 Maven 已在 build 阶段随发布完成，这里只负责把同一份 staging 内容提交到 Maven Central。
+  publish-maven-central:
+    name: Publish to Maven Central
+    needs: [build]
+    uses: ./.github/workflows/publish_maven_central.yml
+    secrets:
+      maven_central_username: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      maven_central_password: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      signing_key: ${{ secrets.SIGNING_KEY }}
+      signing_public_key: ${{ secrets.SIGNING_PUBLIC_KEY }}
+      signing_password: ${{ secrets.SIGNING_PASSWORD }}

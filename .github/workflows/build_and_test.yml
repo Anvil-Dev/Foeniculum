@@ -1,0 +1,87 @@
+name: Build and Test
+
+on:
+  workflow_call:
+    inputs:
+      pr_build:
+        description: 'PR 构建只做校验，不发布任何产物'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      maven_url:
+        description: '私有 Maven 仓库地址'
+        required: false
+      maven_user:
+        description: '私有 Maven 用户名'
+        required: false
+      maven_pass:
+        description: '私有 Maven 密码'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    env:
+      # 凭据不齐时跳过私有 Maven 发布，让 fork 的 PR 也能跑完整测试。
+      PUBLISH_PRIVATE_MAVEN: ${{ !inputs.pr_build && secrets.maven_url != '' && secrets.maven_user != '' && secrets.maven_pass != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Read properties
+        id: properties
+        uses: christian-draeger/read-properties@1.1.1
+        with:
+          path: gradle.properties
+          properties: 'java_version'
+
+      - name: Set up JDK ${{ steps.properties.outputs.java_version }}
+        uses: actions/setup-java@v5.2.0
+        with:
+          distribution: zulu
+          java-version: ${{ steps.properties.outputs.java_version }}
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # functionalTest 里有真实应用 ModDevGradle 的用例，需要访问 NeoForged 仓库。
+      - name: Build
+        run: ./gradlew build --stacktrace
+
+      - name: Publish to private Maven
+        if: ${{ env.PUBLISH_PRIVATE_MAVEN == 'true' }}
+        run: ./gradlew publish --stacktrace
+        env:
+          MAVEN_URL: ${{ secrets.maven_url }}
+          MAVEN_USERNAME: ${{ secrets.maven_user }}
+          MAVEN_PASSWORD: ${{ secrets.maven_pass }}
+
+      # Maven Central 的发布由调用方在 release 流程里单独触发，这里只把 staging 内容留作构建产物。
+      - name: Stage for Maven Central
+        run: ./gradlew publishAllPublicationsToStagingRepository --stacktrace
+
+      - name: Upload staging artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: staging-deploy
+          path: build/staging-deploy/
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests/
+            build/test-results/

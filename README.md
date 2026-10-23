@@ -156,7 +156,30 @@ dependencies {
 
 `build` 会编译、运行单元测试并执行 `functionalTest`——后者用 Gradle TestKit 在临时工程里驱动插件，验证解析、扁平化与打包行为，其中还包括一个与真实 ModDevGradle 混用的用例。这个用例刻意不配置 `neoForge` 扩展块，因此只要不触碰 Minecraft 相关任务，就不需要下载 Minecraft 与服务端资源。
 
-仓库的 GitHub Actions 工作流在每次推送到任意分支、提交拉取请求以及手动触发时，于 `ubuntu-latest` 上用 Temurin JDK 21 运行 `./gradlew build --stacktrace`。工作流不做任何发布，权限仅为 `contents: read`。
+## 持续集成与发布
+
+GitHub Actions 的工作流分成三层，由 `build_and_test.yml` 提供可复用的构建步骤：
+
+| 工作流 | 触发条件 | 行为 |
+| --- | --- | --- |
+| `pull_request.yml` | 对 `main` 的拉取请求 | 只跑 `./gradlew build`，不发布任何产物 |
+| `ci.yml` | 推送到 `main` 或手动触发 | 跑构建，随后把构件发布到私有 Maven |
+| `release.yml` | 发布 GitHub Release 或手动触发 | 跑构建并发布到私有 Maven，再把 staging 内容提交到 Maven Central |
+
+所有工作流都在 `ubuntu-latest` 上用 Zulu JDK 21 运行，权限仅为 `contents: read`。构建步骤会先用 `gradle/actions/wrapper-validation` 校验 Gradle Wrapper，避免被篡改的 wrapper 进入构建。
+
+发布到 Maven Central 走 Sonatype 的 Portal API：`maven-publish` 先把构件写进本地 `build/staging-deploy`，再由 JReleaser 签名、校验规则并上传递交。这样发布失败时不会留下半成品，也能在提交前检查 staging 目录里的内容。
+
+工作流引用的 secrets 与 AnvilLib 保持一致：
+
+| Secret | 用途 |
+| --- | --- |
+| `MAVEN_URL` / `MAVEN_USER` / `MAVEN_PASS` | 私有 Maven 仓库地址与凭据 |
+| `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` | Maven Central 的 Portal 令牌 |
+| `SIGNING_KEY` / `SIGNING_PUBLIC_KEY` | GPG 密钥对的 armored 文本 |
+| `SIGNING_PASSWORD` | GPG 私钥口令 |
+
+缺少私有 Maven 凭据时（例如来自 fork 的拉取请求）会自动跳过该步发布，构建与测试照常执行；Maven Central 的凭据只在 `release.yml` 中传入，推送到 `main` 不会触发中央仓库发布。
 
 ## 许可证
 

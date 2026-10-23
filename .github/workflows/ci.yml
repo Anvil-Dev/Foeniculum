@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/**
+      - gradle/**
+      - src/**
+      - build.gradle.kts
+      - settings.gradle.kts
+      - gradle.properties
+      - gradlew
+      - gradlew.bat
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and Test
+    uses: ./.github/workflows/build_and_test.yml
+    with:
+      pr_build: false
+    secrets:
+      maven_url: ${{ secrets.MAVEN_URL }}
+      maven_user: ${{ secrets.MAVEN_USER }}
+      maven_pass: ${{ secrets.MAVEN_PASS }}

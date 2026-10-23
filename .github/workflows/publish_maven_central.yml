@@ -1,0 +1,71 @@
+name: Publish to Maven Central
+
+on:
+  workflow_call:
+    secrets:
+      maven_central_username:
+        description: 'Maven Central 用户名'
+        required: true
+      maven_central_password:
+        description: 'Maven Central 密码'
+        required: true
+      signing_key:
+        description: 'GPG 私钥（armored）'
+        required: true
+      signing_public_key:
+        description: 'GPG 公钥（armored）'
+        required: true
+      signing_password:
+        description: 'GPG 私钥口令'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Read properties
+        id: properties
+        uses: christian-draeger/read-properties@1.1.1
+        with:
+          path: gradle.properties
+          properties: 'java_version'
+
+      - name: Set up JDK ${{ steps.properties.outputs.java_version }}
+        uses: actions/setup-java@v5.2.0
+        with:
+          distribution: zulu
+          java-version: ${{ steps.properties.outputs.java_version }}
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download staged artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: staging-deploy
+          path: build/staging-deploy/
+
+      - name: Publish to Maven Central
+        run: ./gradlew jreleaserDeploy --stacktrace
+        env:
+          JRELEASER_MAVENCENTRAL_USERNAME: ${{ secrets.maven_central_username }}
+          JRELEASER_MAVENCENTRAL_PASSWORD: ${{ secrets.maven_central_password }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.signing_key }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.signing_public_key }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.signing_password }}
+          # JReleaser 的配置模型要求 release 段有凭据，即使这里只做 Maven Central 部署。
+          # GitHub 会自动注入 GITHUB_TOKEN，无需额外配置 secret。
+          GITHUB_TOKEN: ${{ github.token }}
