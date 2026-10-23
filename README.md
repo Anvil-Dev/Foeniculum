@@ -1,72 +1,80 @@
-# 茴香（Foeniculum）
+<div align="center">
 
-「茴香」（Foeniculum）是一个 ModDevGradle（简称 MDG）的配套 Gradle 插件，插件 id 为 `dev.anvilcraft.resource.foeniculum`，Maven 坐标为 `dev.anvilcraft.resource:foeniculum-gradle-plugin`，以 GNU LGPL 3.0 发布。
+# Foeniculum
 
-它引入一套名为 `slimJarJar` 的机制：让库以「瘦身包 + 独立描述文件」的形式发布，由顶层项目递归读取描述文件，把整棵依赖树压平成一层，再与原生 `jarJar` 的内嵌内容一起写入主 jar 的标准 FML 元数据。整个过程不改变、也不干扰 MDG 原生 `jarJar` 的行为。
+**A ModDevGradle companion plugin that slims and flattens nested jar-in-jar dependencies into a single layer.**
 
-## 命名由来
+English | [简体中文](README.zh_CN.md)
 
-茴香的地上部分有一根粗壮的主茎，主茎上分出大量细密羽状的枝叶。
+</div>
 
-这个插件把「瘦身构件」——`-slim.jar` 与 `-slim-metadata.json`——比作那些细枝：它们通过 Maven 在库与库之间一层层流转，每一层都只携带自己这一段的依赖描述。而最终只有顶层产品这一根主茎，负责把整棵细枝逐层聚合并压平，收束成主 jar 里唯一一份元数据。
+Foeniculum is a Gradle plugin for ModDevGradle (MDG). Its plugin id is `dev.anvilcraft.resource.foeniculum` and its Maven coordinate is `dev.anvilcraft.resource:foeniculum-gradle-plugin`. It is released under GNU LGPL 3.0.
 
-## 要解决的问题
+It provides a mechanism called `slimJarJar`: libraries publish a slim artifact plus a standalone descriptor file, and the top-level project reads those descriptors recursively, flattens the whole dependency tree into one layer, and writes the result into the main jar's standard FML metadata alongside the native `jarJar` entries. None of this changes or interferes with how MDG's native `jarJar` behaves.
 
-NeoForge 生态里分发库的常用手段是 Jar-in-Jar（缩写 JiJ，即把依赖的 jar 嵌进自己的 jar，运行时由 FML 解包加载）。MDG 原生提供 `jarJar` 配置和同名任务来完成这件事，插件作者只要把依赖写进 `jarJar` 配置，产物里就会带上对应的内嵌包和 FML 元数据。
+## Why the name
 
-问题出现在多个库互相依赖、并且都各自 `jarJar` 了下游库的时候。假设 A 依赖 B 与 C，而 B 自己也嵌了 C，那么 A 用原生 `jarJar` 会分别把 B、C 嵌进产物，B 内部又带着一份 C，于是 C 在 A 的产物里出现了两份。jar 体积因此膨胀，运行时还可能出现同一个模块加载到多个版本而引发冲突。
+The above-ground part of fennel has one thick main stalk, from which a great many fine, feathery branches grow.
 
-MDG 原生 `jarJar` 针对的是「一个项目内嵌若干直接依赖」这一层语义，它并不知道下游库内部又嵌了什么，因此这个重复问题需要在库的发布方式上解决。
+This plugin compares its slim artifacts — `-slim.jar` and `-slim-metadata.json` — to those branches: they travel from library to library through Maven, one layer at a time, and each layer carries only its own segment of the dependency description. Only the top-level product, the main stalk, aggregates all those branches and flattens them into the single piece of metadata inside the main jar.
 
-## 解决思路
+## The problem
 
-插件把责任拆成两半：中间库负责「薄」，顶层负责「平」。
+The usual way to distribute a library in the NeoForge ecosystem is Jar-in-Jar (JiJ): embed the dependency's jar inside your own jar, and let FML unpack and load it at runtime. MDG ships a `jarJar` configuration and a task of the same name for this; a plugin author only has to declare a dependency in `jarJar`, and the artifact will contain the embedded jar and the FML metadata.
 
-中间库安装本插件后，可以额外产出两个构件：一份瘦身包 `-slim.jar`，以及一份独立的描述文件 `-slim-metadata.json`。瘦身包里照旧保留项目自身的原生 `jarJar` 内嵌内容——不装插件时是什么样，装上之后仍然是什么样——但它不再把 `slimJarJar` 的依赖实体打进去，只在描述文件里记下这些依赖的坐标与版本约束。
+The problem appears when several libraries depend on each other and each of them also `jarJar`s its own downstream libraries. Suppose A depends on B and C, and B itself embeds C. With native `jarJar`, A embeds both B and C, while B carries another copy of C inside it — so C ends up in A's artifact twice. Jar size grows, and at runtime the same module may even be loaded in multiple versions and conflict.
 
-顶层项目用 `slimJarJar` 声明依赖后，构建时沿着描述文件递归向下走，把整棵树收集起来，对同一模块的所有版本约束取交集并裁决出唯一版本，剔除与原生 `jarJar` 重复的模块，最后把压平后的内嵌包与原生内嵌包一起放进主 jar，并生成唯一一份合并后的 `metadata.json`。
+MDG's native `jarJar` addresses the level of "one project embedding a few direct dependencies"; it has no knowledge of what downstream libraries embed internally. The duplication therefore has to be solved in how libraries are published.
 
-这样无论依赖树嵌套多深，主 jar 的 `META-INF/jarjar/` 下每个模块都只有一份。
+## The approach
 
-## 使用方式
+The plugin splits the responsibility in two: intermediate libraries stay *thin*, the top-level project makes things *flat*.
+
+With this plugin applied, an intermediate library can produce two extra artifacts: a slim jar `-slim.jar` and a standalone descriptor `-slim-metadata.json`. The slim jar still keeps the project's own native `jarJar` embedded content — unchanged from what it would be without the plugin — but it no longer packs the actual `slimJarJar` dependencies; those are recorded in the descriptor as coordinates and version constraints.
+
+Once the top-level project declares dependencies with `slimJarJar`, the build walks down through the descriptors, collects the whole tree, intersects all version constraints for the same module and decides on a single version, drops modules that duplicate the native `jarJar` set, and finally puts both the flattened embedded jars and the native ones into the main jar with one merged `metadata.json`.
+
+However deep the tree is nested, every module appears exactly once under the main jar's `META-INF/jarjar/`.
+
+## Usage
 
 ```groovy
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id 'net.neoforged.moddev' version '<MDG 版本>'
-    id 'dev.anvilcraft.resource.foeniculum' version '<茴香版本>'
+    id 'net.neoforged.moddev' version '<MDG version>'
+    id 'dev.anvilcraft.resource.foeniculum' version '<Foeniculum version>'
 }
 
 foeniculum {
-    // 是否自动把瘦身包与描述文件挂到 maven-publish 的发布上，默认 true
+    // Whether to attach the slim jar and descriptor to the maven-publish publication. Defaults to true.
     autoAttachPublishing = true
 }
 
 dependencies {
-    jarJar 'com.example:legacy-lib:1.0.0'                          // MDG 原生，茴香完全不干预
-    slimJarJar 'com.example.lib:core-lib:[2.0.0,3.0.0)'             // 支持版本区间
-    slimJarJar 'com.example.lib:util-lib:1.4.2'                    // 也支持固定版本
+    jarJar 'com.example:legacy-lib:1.0.0'                          // Native MDG; Foeniculum does not touch it
+    slimJarJar 'com.example.lib:core-lib:[2.0.0,3.0.0)'             // Version ranges are supported
+    slimJarJar 'com.example.lib:util-lib:1.4.2'                    // Fixed versions work too
 }
 ```
 
-`autoAttachPublishing` 只在项目应用了 `maven-publish` 时才有实际作用：开启后，瘦身包以 classifier `slim`、描述文件以 classifier `slim-metadata` 挂到已有的发布上，不需要自己手写 `artifact` 声明；关闭后插件不接触发布配置，由项目自行决定如何发布这两个文件。
+`autoAttachPublishing` only has an effect when the project applies `maven-publish`. When enabled, the slim jar is attached with classifier `slim` and the descriptor with classifier `slim-metadata`, so there is no need to declare the `artifact` entries by hand. When disabled, the plugin leaves the publishing configuration untouched and the project decides how to publish the two files.
 
-## 三个产物
+## The three artifacts
 
-| 产物 | 路径 | classifier / extension | 内容 |
+| Artifact | Path | classifier / extension | Contents |
 | --- | --- | --- | --- |
-| 主 jar | `build/libs/<name>-<version>.jar` | 无 / `jar` | 项目自身代码；`META-INF/jarjar/` 下是原生 `jarJar` 内嵌包 + 压平后的瘦身内嵌包 + 两者合并后的唯一一份 `metadata.json` |
-| 瘦身包 | `build/libs/<name>-<version>-slim.jar` | `slim` / `jar` | 项目自身代码；`META-INF/jarjar/` 下只有原生 `jarJar` 的内嵌包与原生 `metadata.json`，与不装本插件时完全一致；若项目没有原生 `jarJar` 依赖，则根本不存在 `META-INF/jarjar/` 目录 |
-| 描述文件 | `build/foeniculum/publish/<name>-<version>-slim-metadata.json` | `slim-metadata` / `json` | 只有通过 `slimJarJar` 直接声明的依赖，以及当前项目声明的仓库列表（仅供参考） |
+| Main jar | `build/libs/<name>-<version>.jar` | none / `jar` | The project's own code; under `META-INF/jarjar/` live the native `jarJar` embedded jars, the flattened slim embedded jars, and one merged `metadata.json` |
+| Slim jar | `build/libs/<name>-<version>-slim.jar` | `slim` / `jar` | The project's own code; under `META-INF/jarjar/` only the native `jarJar` embedded jars and the native `metadata.json`, identical to the artifact without the plugin; if the project has no native `jarJar` dependencies, the `META-INF/jarjar/` directory does not exist at all |
+| Descriptor | `build/foeniculum/publish/<name>-<version>-slim-metadata.json` | `slim-metadata` / `json` | Only the dependencies declared directly through `slimJarJar`, plus the repository list the project declares (for reference only) |
 
-主 jar 是交付给最终用户的那一个，它承担全部聚合职责。瘦身包是中间库发布到仓库里的那一份，它自身保持原样，从而让下游无论嵌套多少层都不会累积重复内容。描述文件不参与打包，只随瘦身包一起发布到 Maven 仓库，供下游构建时读取。
+The main jar is what ships to end users and carries the entire aggregation duty. The slim jar is what an intermediate library publishes to a repository; it stays as it is, so no amount of nesting downstream accumulates duplicates. The descriptor is not packaged — it is published to the Maven repository next to the slim jar and read by downstream builds.
 
-三个产物都在构建过程中一次生成；它们的文件名遵循项目的 `archivesName` 与 `version`，与主 jar 保持一致。
+All three are produced in a single build; their file names follow the project's `archivesName` and `version`, matching the main jar.
 
-## 描述文件格式
+## Descriptor format
 
-`-slim-metadata.json` 的格式如下：
+`-slim-metadata.json` looks like this:
 
 ```json
 {
@@ -87,15 +95,15 @@ dependencies {
 }
 ```
 
-`schemaVersion` 固定为 `1`；读到更高的版本会直接报错并提示升级插件，避免旧插件按旧语义误解新格式。
+`schemaVersion` is fixed at `1`. A higher version is rejected with an error asking to upgrade the plugin, so an old plugin cannot silently misread a newer format.
 
-`repositories` 只做参考，下游解析时会把它与自己的仓库比较，**从不自动注入仓库**。
+`repositories` is purely informational: downstream resolves against it only by comparing it with its own repositories. **Repositories are never injected automatically.**
 
-`dependencies` 只记录直接声明，不展开传递依赖：一棵树的形状由各层描述文件自己拼出来，每一层只对自己声明的东西负责。`isSlim` 表示该依赖是否以瘦身包（`-slim.jar`）形式被内嵌——绝大多数情况为 `true`，只有下游库没能提供瘦身包、回退到普通 jar 时为 `false`。
+`dependencies` records direct declarations only and does not expand transitive ones: the shape of the tree is assembled by each layer's descriptor, and every layer is responsible only for what it declares. `isSlim` indicates whether the dependency is embedded as a slim jar (`-slim.jar`) — `true` in the vast majority of cases, and `false` only when the downstream library provides no slim jar and the standard jar is used instead.
 
-## 主 jar 中的 FML 元数据
+## FML metadata in the main jar
 
-主 jar 里的 `META-INF/jarjar/metadata.json` 是 NeoForge FML 规定的标准 JiJ 元数据，茴香生成的部分与 MDG 原生格式完全一致：
+`META-INF/jarjar/metadata.json` in the main jar is the standard JiJ metadata defined by NeoForge FML, and the entries Foeniculum generates match MDG's native format exactly:
 
 ```json
 {
@@ -116,71 +124,71 @@ dependencies {
 }
 ```
 
-原生命中沿用 MDG 的文件名；茴香内嵌的文件名带 `-slim` 后缀（回退到普通 jar 时则不带），让人一眼看出某个内嵌包是「分支」还是普通 jar。若两个不同 group 的同名同版本模块撞名，解析阶段会再加上 group 前缀区分。
+Native entries keep MDG's file names; jars embedded by Foeniculum carry a `-slim` suffix (omitted when falling back to a standard jar), so it is immediately obvious whether an embedded jar is a branch or a plain jar. If two modules with the same artifact, version, and conflicting groups collide, the group prefix is prepended during resolution to tell them apart.
 
-合并规则是确定的：原生 `jarJar` 的条目原样保留且顺序不变，瘦身条目追加在其后，按 `group:artifact` 排序；同一个 `group:artifact` 若同时出现在两侧，保留原生侧并输出一条 Gradle 警告。这条警告是提示而非错误，因为原生声明是项目显式写下的，应当拥有更高优先级。
+The merge rules are deterministic: native `jarJar` entries are preserved verbatim and in order, slim entries are appended after them sorted by `group:artifact`, and when the same `group:artifact` appears on both sides the native side is kept with a Gradle warning. The warning is a notice rather than an error because a native declaration is something the project wrote explicitly and should take precedence.
 
-但「保留原生侧」有一个前提：原生内嵌的版本必须落在瘦身侧对该模块声明的区间内。若原生内嵌的是 `1.0.0`、而下游描述文件要求 `[2.0,3.0)`，运行时 FML 会拿区间去比对实际内嵌的版本并报 Jar-in-Jar 冲突；这种情况在构建期就抛出异常并指出两侧的取值，而不是留下一个「构建成功、启动报错」的产物。此时应把 `jarJar` 的版本调整到该区间内，或去掉其中一侧的声明。
+"Keep the native side" has one precondition: the natively embedded version must fall within the range the slim side declares for that module. If the native side embeds `1.0.0` while a downstream descriptor requires `[2.0,3.0)`, FML at runtime compares the range against the actually embedded version and reports a Jar-in-Jar conflict. Such cases fail the build with both values named, rather than producing an artifact that builds fine and crashes on startup. The fix is to move the `jarJar` version into that range, or to drop one of the two declarations.
 
-## 递归解析与扁平化
+## Recursive resolution and flattening
 
-构建时从 `slimJarJar` 的直接声明出发，逐一到项目已声明的 Maven 仓库里取 `group/artifact/version/artifact-version-slim-metadata.json`，再沿着其中的 `dependencies` 递归，直到某一层取不到描述文件为止；取不到描述文件的模块就是这棵树的叶子，会被直接内嵌。
+The build starts from the direct `slimJarJar` declarations and fetches `group/artifact/version/artifact-version-slim-metadata.json` from the Maven repositories the project declares, then recurses along its `dependencies` until a layer has no descriptor. A module without a descriptor is a leaf of the tree and is embedded directly.
 
-构件优先取 `artifact-version-slim.jar`，不存在时回退取 `artifact-version.jar` 并把 `isSlim` 记为 `false`，同时输出警告。回退是必要的：并非所有下游库都会立刻改用本插件发布，把一个没有瘦身包的普通 jar 当作叶子内嵌，比让整条构建失败更合理。
+Artifacts are taken from `artifact-version-slim.jar` first; when it is absent the build falls back to `artifact-version.jar`, sets `isSlim` to `false`, and emits a warning. The fallback matters: not every downstream library will switch to this plugin immediately, and embedding a plain jar as a leaf is more reasonable than failing the whole build.
 
-整棵树最终压平成一层。同一模块出现的所有 `versionRange` 取交集；在出现过的 `preferredVersion` 等候选版本里选满足交集的最高版本；候选都不满足时，回退到仓库 `maven-metadata.xml` 里挑选满足交集的最高版本。交集为空、或没有任何版本满足条件时抛出构建异常，异常信息里列出每个约束的来源链，便于定位是哪一层把版本区间收窄到了无法满足的地步。
+The tree is then flattened into one layer. All `versionRange` values seen for a module are intersected; the highest version among the candidates (the observed `preferredVersion` values and so on) that satisfies the intersection is chosen; if none does, the build falls back to the highest version in the repository's `maven-metadata.xml` that satisfies it. An empty intersection, or no satisfying version at all, raises a build exception listing each constraint's origin so it is clear which layer narrowed the range beyond satisfiability.
 
-判断冲突时不会把迭代过程中的中间状态当成最终结论。一个模块的版本被抬高后，旧版本声称的依赖就不再成立；但抬高之前，旧版本声明的约束可能已经把下游模块的区间压成空集。这种空集只是暂时的，若立刻报错会让一个本来有解的依赖图失败。因此迭代期间遇到空交集会先沿用上一轮的选择让其他模块继续演进，只有整轮决策稳定下来后仍然存在空交集，才判定为不可调和的冲突。
+Conflicts are not judged from intermediate states of the iteration. Once a module is raised to a different version, the dependencies its old version declared no longer hold — but before that happens, the old version's constraints may already have collapsed a downstream module's range to an empty set. Such an empty set is only temporary, and failing on it immediately would break a dependency graph that does have a solution. The iteration therefore keeps the previous choice when it hits an empty intersection and lets other modules keep evolving; a conflict is reported only when a full round of decisions is stable and an empty intersection still remains.
 
-版本区间合并后会被规范化，固定版本改写成只有下界的区间形式，例如固定 `1.2.3` 写作 `[1.2.3,)`，这样描述文件里永远只有一种写法，下游的比较逻辑不必区分固定版本与区间。
+Merged version ranges are normalized: a fixed version is rewritten as a range with only a lower bound, so `1.2.3` becomes `[1.2.3,)`. Descriptors thus only ever use one form, and downstream comparison logic does not need to distinguish fixed versions from ranges.
 
-去重发生在与原生 `jarJar` 之间：同一 `group:artifact` 在两侧都存在时，瘦身侧条目被丢弃，原生侧原样保留。这条规则同时覆盖了「本项目已用原生 `jarJar` 内嵌某个库，而下游描述文件又把它带进来」的情形，因为这种情况在合并时表现为两侧同名。
+Deduplication happens between the native `jarJar` set and the slim set: when the same `group:artifact` exists on both sides, the slim entry is dropped and the native one is kept verbatim. This also covers the case where a project already embeds a library through native `jarJar` while a downstream descriptor brings it in again, since that shows up as a name collision during merging.
 
-下游描述文件里若出现当前项目没有声明的仓库，只会输出一条明确的 Gradle 警告，不会修改 `project.repositories`。构建期的仓库集合由项目自己掌握，插件不替项目做网络访问策略上的决定。
+If a downstream descriptor mentions a repository the current project has not declared, the plugin only emits a clear Gradle warning; it never modifies `project.repositories`. The set of repositories at build time belongs to the project, and the plugin does not make network access policy decisions on its behalf.
 
-## 明确不支持的情形
+## Explicitly unsupported
 
-只处理 `main` 源集。其他源集的产物不在本插件的处理范围内。
+Only the `main` source set is handled. Artifacts from other source sets are outside this plugin's scope.
 
-`slimJarJar` 不接受项目依赖（project dependency）。声明了会直接抛出异常并说明原因：这套机制依赖构件经 Maven 仓库流转，项目依赖没有可发布的坐标，也没有描述文件可供下游读取，强行支持只会得到一条无法复现的解析路径。
+`slimJarJar` does not accept project dependencies. Declaring one raises an exception explaining why: the mechanism relies on artifacts flowing through Maven repositories, and a project dependency has no publishable coordinate and no descriptor for downstream to read. Forcing support would only produce an unreproducible resolution path.
 
-不接受动态版本（如 `1.+`、`latest.release`）。请改用固定版本或版本区间，解析结果必须能由描述文件本身唯一确定。
+Dynamic versions (such as `1.+` or `latest.release`) are rejected. Use a fixed version or a version range instead; the resolved result must be uniquely determined by the descriptor itself.
 
-## 构建与测试
+## Build and test
 
-插件本身是一个普通 Gradle 工程，用 JDK 21 构建：
+The plugin is an ordinary Gradle project built with JDK 21:
 
 ```shell
 ./gradlew build
 ```
 
-`build` 会编译、运行单元测试并执行 `functionalTest`——后者用 Gradle TestKit 在临时工程里驱动插件，验证解析、扁平化与打包行为，其中还包括一个与真实 ModDevGradle 混用的用例。这个用例刻意不配置 `neoForge` 扩展块，因此只要不触碰 Minecraft 相关任务，就不需要下载 Minecraft 与服务端资源。
+`build` compiles, runs the unit tests, and executes `functionalTest`, which drives the plugin inside temporary projects through the Gradle TestKit to verify resolution, flattening, and packaging. Among them is a case that coexists with a real ModDevGradle setup. That case deliberately does not configure the `neoForge` block, so as long as no Minecraft-related task is touched, no Minecraft or server-side resources need to be downloaded.
 
-## 持续集成与发布
+## Continuous integration and publishing
 
-GitHub Actions 的工作流分成三层，由 `build_and_test.yml` 提供可复用的构建步骤：
+The GitHub Actions workflows are layered, with `build_and_test.yml` providing the reusable build steps:
 
-| 工作流 | 触发条件 | 行为 |
+| Workflow | Trigger | Behavior |
 | --- | --- | --- |
-| `pull_request.yml` | 对 `main` 的拉取请求 | 只跑 `./gradlew build`，不发布任何产物 |
-| `ci.yml` | 推送到 `main` 或手动触发 | 跑构建，随后把构件发布到私有 Maven |
-| `release.yml` | 发布 GitHub Release 或手动触发 | 跑构建并发布到私有 Maven，再把 staging 内容提交到 Maven Central |
+| `pull_request.yml` | Pull request targeting `main` | Runs `./gradlew build` only; publishes nothing |
+| `ci.yml` | Push to `main` or manual dispatch | Runs the build, then publishes the artifacts to the private Maven |
+| `release.yml` | GitHub Release published or manual dispatch | Runs the build, publishes to the private Maven, then submits the staging content to Maven Central |
 
-所有工作流都在 `ubuntu-latest` 上用 Zulu JDK 21 运行，权限仅为 `contents: read`。构建步骤会先用 `gradle/actions/wrapper-validation` 校验 Gradle Wrapper，避免被篡改的 wrapper 进入构建。
+All workflows run on `ubuntu-latest` with Zulu JDK 21 and only hold `contents: read` permission. The build first validates the Gradle Wrapper with `gradle/actions/wrapper-validation` so a tampered wrapper cannot enter the build.
 
-发布到 Maven Central 走 Sonatype 的 Portal API：`maven-publish` 先把构件写进本地 `build/staging-deploy`，再由 JReleaser 签名、校验规则并上传递交。这样发布失败时不会留下半成品，也能在提交前检查 staging 目录里的内容。
+Publishing to Maven Central goes through Sonatype's Portal API: `maven-publish` first writes the artifacts into the local `build/staging-deploy`, then JReleaser signs them, validates the rules, and uploads the submission. This way a failed publication leaves no half-published state, and the contents of the staging directory can be inspected before submission.
 
-工作流引用的 secrets 与 AnvilLib 保持一致：
+The secrets referenced by the workflows match those of AnvilLib:
 
-| Secret | 用途 |
+| Secret | Purpose |
 | --- | --- |
-| `MAVEN_URL` / `MAVEN_USER` / `MAVEN_PASS` | 私有 Maven 仓库地址与凭据 |
-| `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` | Maven Central 的 Portal 令牌 |
-| `SIGNING_KEY` / `SIGNING_PUBLIC_KEY` | GPG 密钥对的 armored 文本 |
-| `SIGNING_PASSWORD` | GPG 私钥口令 |
+| `MAVEN_URL` / `MAVEN_USER` / `MAVEN_PASS` | Private Maven repository URL and credentials |
+| `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` | Portal token for Maven Central |
+| `SIGNING_KEY` / `SIGNING_PUBLIC_KEY` | Armored text of the GPG key pair |
+| `SIGNING_PASSWORD` | Passphrase of the GPG private key |
 
-缺少私有 Maven 凭据时（例如来自 fork 的拉取请求）会自动跳过该步发布，构建与测试照常执行；Maven Central 的凭据只在 `release.yml` 中传入，推送到 `main` 不会触发中央仓库发布。
+When private Maven credentials are missing (for example on a pull request from a fork) that publishing step is skipped automatically while the build and tests still run. Maven Central credentials are passed only in `release.yml`, so a push to `main` never triggers a Central publication.
 
-## 许可证
+## License
 
-本项目以 GNU Lesser General Public License 3.0 发布。使用、修改与再分发时请遵守该许可证的条款，尤其是关于修改后作品仍需以同一许可证开放源代码的要求。
+This project is released under the GNU Lesser General Public License 3.0. Use, modification, and redistribution are subject to its terms, especially the requirement that modified works remain open source under the same license.
