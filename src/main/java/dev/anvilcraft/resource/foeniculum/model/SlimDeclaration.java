@@ -11,7 +11,7 @@ import java.io.Serializable;
  *
  * @param group 依赖的 group
  * @param artifact 依赖的 artifact
- * @param versionRange 声明的原始版本写法，例如 {@code [2.0.0,3.0.0)} 或 {@code 1.4.2}
+ * @param versionRange 声明的原始版本写法，例如 {@code [2.0.0,3.0.0)}、{@code 1.4.2} 或 {@code latest.release}
  * @param resolvedVersion 当前构建为该声明解析出的具体版本
  */
 public record SlimDeclaration(String group, String artifact, String versionRange, String resolvedVersion)

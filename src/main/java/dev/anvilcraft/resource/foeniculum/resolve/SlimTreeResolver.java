@@ -111,7 +111,8 @@ public final class SlimTreeResolver {
                     constraints,
                     declaration.group(),
                     declaration.artifact(),
-                    declaration.versionRange(),
+                    VersionRanges.parseDeclaration(declaration.versionRange(), declaration.resolvedVersion(),
+                            "直接依赖 " + declaration.moduleId()).format(),
                     declaration.resolvedVersion(),
                     "本项目直接声明");
         }

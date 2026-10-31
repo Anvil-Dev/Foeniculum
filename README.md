@@ -153,11 +153,11 @@ Deduplication happens between the native `jarJar` set and the slim set: when the
 
 If a downstream descriptor mentions a repository the current project has not declared, the plugin only emits a clear Gradle warning; it never modifies `project.repositories`. The set of repositories at build time belongs to the project, and the plugin does not make network access policy decisions on its behalf.
 
+Gradle dynamic selectors such as `latest.release`, `1.+`, and `1.2.3+build.+` are supported in `slimJarJar` declarations. Gradle resolves the selector first; Foeniculum then uses that concrete version as the lower bound, following the same rule as fixed versions. For example, `1.2.3+build.+` resolving to `1.2.3+build.10` produces `[1.2.3+build.10,)` and records `1.2.3+build.10` as the preferred version. Published descriptors contain concrete bounds, so consumers do not re-evaluate the original selector. Dynamic expressions inside explicit range boundaries remain unsupported.
+
 ## Explicitly unsupported
 
 Only the `main` source set is handled. Artifacts from other source sets are outside this plugin's scope.
-
-Dynamic versions (such as `1.+` or `latest.release`) are rejected. Use a fixed version or a version range instead; the resolved result must be uniquely determined by the descriptor itself.
 
 ## Build and test
 

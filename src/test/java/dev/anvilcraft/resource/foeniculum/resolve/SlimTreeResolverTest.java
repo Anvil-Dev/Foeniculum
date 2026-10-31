@@ -54,6 +54,35 @@ class SlimTreeResolverTest {
     }
 
     @Test
+    void 动态直接依赖与传递区间合并且允许兼容升级() {
+        source.metadata("com.example", "top", "1.0.0",
+                List.of(slimDependency("com.example", "shared", "[1.0,3.0)", "2.0.0")));
+        source.jar("com.example", "top", "1.0.0");
+        source.jar("com.example", "shared", "2.0.0");
+
+        SlimTree tree = resolve(declaration("com.example", "top", "1.0.0"),
+                new SlimDeclaration("com.example", "shared", "latest.release", "1.5.0"));
+
+        assertEquals("2.0.0", tree.find("com.example:shared").version());
+        assertEquals("[1.5.0,3.0)", tree.find("com.example:shared").versionRange());
+    }
+
+    @Test
+    void 动态版本解析出的下界仍会参与冲突检查() {
+        source.metadata("com.example", "top", "1.0.0",
+                List.of(slimDependency("com.example", "shared", "[1.0,2.0)", "1.5.0")));
+        source.jar("com.example", "top", "1.0.0");
+        source.jar("com.example", "shared", "2.0.0");
+
+        ModuleConflictException error = assertThrows(ModuleConflictException.class,
+                () -> resolve(declaration("com.example", "top", "1.0.0"),
+                        new SlimDeclaration("com.example", "shared", "latest.release", "2.0.0")));
+
+        assertTrue(error.getMessage().contains("[2.0.0,)"), error.getMessage());
+        assertTrue(error.getMessage().contains("[1.0,2.0)"), error.getMessage());
+    }
+
+    @Test
     void 三级依赖树被压平成一层() {
         source.metadata("com.example", "top", "1.0.0", List.of(slimDependency("com.example", "mid", "[1.0,)", "1.0.0")));
         source.metadata("com.example", "mid", "1.0.0", List.of(slimDependency("com.example", "leaf", "[1.0,)", "1.0.0")));

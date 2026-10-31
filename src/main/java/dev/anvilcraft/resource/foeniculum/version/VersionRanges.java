@@ -129,6 +129,21 @@ public final class VersionRanges {
         return range;
     }
 
+    /**
+     * 解析当前构建的直接声明；动态选择器由 Gradle 先解析，再按固定版本的规则转为具体下界。
+     *
+     * <p>动态选择器只用于构建时选版本，不能原样写进 FML 或瘦身描述文件。
+     * 显式区间仍保留原约束，也不允许在区间边界中混入动态选择器。
+     */
+    public static Range parseDeclaration(String spec, String resolvedVersion, String context) {
+        Objects.requireNonNull(spec, "spec");
+        String trimmed = spec.trim();
+        if (!trimmed.startsWith("[") && !trimmed.startsWith("(") && isDynamic(trimmed)) {
+            return parse(resolvedVersion, context + " 的解析版本");
+        }
+        return parse(spec, context);
+    }
+
     /** 多个区间的交集。交集为空时抛出异常，来源链由调用方补充。 */
     public static Range intersect(Collection<Range> ranges) {
         if (ranges.isEmpty()) {
@@ -189,8 +204,7 @@ public final class VersionRanges {
     }
 
     private static boolean isDynamic(String spec) {
-        // Maven 的 RELEASE/LATEST 与 1.+、latest.release 同属动态版本：解析结果取决于仓库当时的内容，
-        // 而描述文件必须能唯一确定版本，否则下游每次构建都可能得到不同的树。
+        // 这里只识别动态写法；直接声明会先用 Gradle 的解析结果替换，持久化的区间则必须已有具体边界。
         String upper = spec.toUpperCase(Locale.ROOT);
         if (upper.equals("RELEASE") || upper.equals("LATEST") || spec.startsWith("latest.")) {
             return true;

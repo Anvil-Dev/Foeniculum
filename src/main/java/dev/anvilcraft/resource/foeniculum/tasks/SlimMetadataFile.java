@@ -75,7 +75,8 @@ public abstract class SlimMetadataFile extends DefaultTask {
 
             List<VersionRanges.Range> ranges = new ArrayList<>();
             for (SlimDeclaration declaration : entry.getValue()) {
-                ranges.add(VersionRanges.parse(declaration.versionRange(), "直接依赖 " + entry.getKey()));
+                ranges.add(VersionRanges.parseDeclaration(declaration.versionRange(), declaration.resolvedVersion(),
+                        "直接依赖 " + entry.getKey()));
             }
             String versionRange;
             try {

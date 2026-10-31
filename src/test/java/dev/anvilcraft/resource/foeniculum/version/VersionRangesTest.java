@@ -35,10 +35,34 @@ class VersionRangesTest {
     }
 
     @Test
-    void 动态版本被拒绝() {
+    void 持久化区间不能包含动态版本() {
         assertThrows(IllegalArgumentException.class, () -> VersionRanges.parse("1.+", "测试"));
         assertThrows(IllegalArgumentException.class, () -> VersionRanges.parse("[1.0,2.0+)", "测试"));
         assertThrows(IllegalArgumentException.class, () -> VersionRanges.parse("latest.release", "测试"));
+    }
+
+    @Test
+    void 直接声明的动态版本使用Gradle解析出的具体下界() {
+        for (String selector : List.of("latest.release", "latest.integration", "1.+", "1.2.3+build.+")) {
+            assertEquals("[1.2.3+build.10,)",
+                    VersionRanges.parseDeclaration(selector, "1.2.3+build.10", "测试").format());
+        }
+    }
+
+    @Test
+    void 固定版本与显式区间不会被Gradle的冲突裁决改写() {
+        assertEquals("[1.2.3+build.2,)",
+                VersionRanges.parseDeclaration("1.2.3+build.2", "1.2.3+build.10", "测试").format());
+        assertEquals("[1.0,3.0)",
+                VersionRanges.parseDeclaration("[1.0,3.0)", "2.0", "测试").format());
+    }
+
+    @Test
+    void 直接声明仍拒绝动态区间边界和未解析的动态版本() {
+        assertThrows(IllegalArgumentException.class,
+                () -> VersionRanges.parseDeclaration("[1.0,2.0+)", "1.5", "测试"));
+        assertThrows(IllegalArgumentException.class,
+                () -> VersionRanges.parseDeclaration("latest.release", "latest.release", "测试"));
     }
 
     @Test
