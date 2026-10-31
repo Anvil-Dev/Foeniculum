@@ -6,10 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.sun.net.httpserver.BasicAuthenticator;
+import com.sun.net.httpserver.HttpServer;
 import dev.anvilcraft.resource.foeniculum.fixture.LocalMavenRepository;
 import dev.anvilcraft.resource.foeniculum.fixture.LocalMavenRepository.Dependency;
 import dev.anvilcraft.resource.foeniculum.fixture.LocalMavenRepository.Module;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +29,53 @@ import org.junit.jupiter.api.io.TempDir;
  * 因此可以先在最小环境里验证，避免每次运行都要解析 ModDevGradle 与 Minecraft 依赖。
  */
 class SlimJarJarFunctionalTest extends BuildFixture {
+    @Test
+    void anonymousHttpRepositoryRemainsAnonymous() throws IOException {
+        verifyHttpRepository(false);
+    }
+
+    @Test
+    void configuredHttpCredentialsRemainUsable() throws IOException {
+        verifyHttpRepository(true);
+    }
+
+    /** 用未缓存的真实 HTTP 构件覆盖匿名与密码仓库，避免本机依赖缓存掩盖认证错误。 */
+    private void verifyHttpRepository(boolean authenticated) throws IOException {
+        String version = "1.0." + System.nanoTime();
+        repository.publish(Module.builder("com.example", "uncached", version).build());
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var context = server.createContext("/", exchange -> {
+            Path file = repository.root().resolve(exchange.getRequestURI().getPath().substring(1)).normalize();
+            if (!file.startsWith(repository.root()) || !Files.isRegularFile(file)) {
+                exchange.sendResponseHeaders(404, -1);
+            } else if (exchange.getRequestMethod().equals("HEAD")) {
+                exchange.sendResponseHeaders(200, -1);
+            } else {
+                byte[] bytes = Files.readAllBytes(file);
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+            }
+            exchange.close();
+        });
+        if (authenticated) context.setAuthenticator(new BasicAuthenticator("fixture") {
+            @Override
+            public boolean checkCredentials(String user, String password) {
+                return user.equals("test-user") && password.equals("test-password");
+            }
+        });
+        server.start();
+        try {
+            String script = buildScript().replace(repository.url(), "http://127.0.0.1:" + server.getAddress().getPort() + "/")
+                .replace("url = uri('http:", "allowInsecureProtocol = true\n                        url = uri('http:")
+                .replace("dependencies {", "dependencies {\n    implementation 'com.example:uncached:" + version + "'");
+            if (authenticated) script = script.replace("allowInsecureProtocol = true",
+                "allowInsecureProtocol = true\n    credentials { username = 'test-user'; password = 'test-password' }");
+            writeBuildFile(root, script);
+            run(root, "build", "--configuration-cache");
+        } finally {
+            server.stop(0);
+        }
+    }
     @TempDir
     Path root;
 

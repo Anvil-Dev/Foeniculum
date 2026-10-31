@@ -22,6 +22,8 @@ import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentSelector;
 import org.gradle.api.artifacts.component.ProjectComponentSelector;
 import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
+import org.gradle.api.credentials.PasswordCredentials;
+import org.gradle.internal.artifacts.repositories.AuthenticationSupportedInternal;
 import org.gradle.api.artifacts.result.ResolvedDependencyResult;
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult;
 import org.gradle.api.plugins.JavaPlugin;
@@ -311,13 +313,11 @@ public class FoeniculumPlugin implements Plugin<Project> {
             }
             String username = null;
             String password = null;
-            // 只有 http 与 https 仓库才读取凭据：getCredentials() 会给仓库打上“使用凭据”的标记，
-            // Gradle 随后改用 AllSchemesAuthentication 创建解析器，而该方案只被 http/https 协议支持。
-            // file: 仓库（典型来源是 mavenLocal()）一旦被调用就会在解析时报
-            // “Authentication scheme 'all' is not supported by protocol 'file'”，而 file 仓库本来也不接受凭据。
-            if (supportsCredentials(maven)) {
-                var credentials = maven.getCredentials();
-                if (credentials != null) {
+            // 公共 getCredentials() 会创建空凭据并开启认证，连匿名 HTTP 仓库也会因此失效。
+            // Gradle 的只读凭据 Provider 位于内部接口中；这里只读取已配置的值，绝不调用创建凭据的 getter。
+            if (supportsCredentials(maven) && maven instanceof AuthenticationSupportedInternal authenticated) {
+                var configured = authenticated.getConfiguredCredentials().getOrNull();
+                if (configured instanceof PasswordCredentials credentials) {
                     username = credentials.getUsername();
                     password = credentials.getPassword();
                 }
