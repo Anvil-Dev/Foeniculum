@@ -207,16 +207,69 @@ class SlimJarJarFunctionalTest extends BuildFixture {
         assertTrue(result.getOutput().contains("未声明的仓库"), result.getOutput());
     }
 
+    /**
+     * 同级项目可以像已发布坐标一样被内嵌。
+     *
+     * <p>项目依赖的产物不在任何 Maven 仓库里，插件把它暂存成构建内 {@code file:} 仓库，解析路径与消费
+     * 已发布坐标完全一致。这里让 lib 也应用本插件并内嵌一个远程模块，验证两件事同时成立：
+     * 项目依赖被正确内嵌，且它自己内嵌的内容也进入了下游的瘦身树（暂存目录是按依赖闭包收集的，
+     * 只看直接依赖会漏掉这一层）。
+     */
     @Test
-    void 项目依赖被拒绝并说明原因() throws IOException {
+    void 项目依赖会被内嵌并展开它自己的内嵌内容() throws IOException {
+        repository.publish(Module.builder("com.example", "leaf", "1.0.0").build());
         writeSettings(root, "rootProject.name = 'demo'\ninclude 'lib'\n");
-        writeFile(root, "lib/build.gradle", "plugins { id 'java-library' }\n");
+        writeFile(root, "lib/build.gradle", """
+                plugins {
+                    id 'java-library'
+                    id 'dev.anvilcraft.resource.foeniculum'
+                }
+                version = '0.5.0'
+                group = 'com.example'
+                repositories {
+                    maven { url = uri('%s') }
+                }
+                dependencies {
+                    slimJarJar 'com.example:leaf:1.0.0'
+                }
+                """.formatted(repository.url()));
         writeBuildFile(root, buildScript().replace(
                 "slimJarJar 'com.example:top:1.0.0'", "slimJarJar project(':lib')"));
 
-        BuildResult result = runExpectingFailure(root, "jar");
+        run(root, "jar");
 
-        assertTrue(result.getOutput().contains("不支持项目依赖"), result.getOutput());
+        Path jar = project.resolve("build/libs/demo-1.2.3.jar");
+        List<String> ids = metadataModuleIds(jar);
+        assertTrue(ids.contains("com.example:lib"), "元数据应包含被引用的项目，实际为 " + ids);
+        assertTrue(ids.contains("com.example:leaf"), "被引用项目自己的内嵌依赖也应出现在元数据中，实际为 " + ids);
+        assertEquals("0.5.0", metadataVersions(jar).get("com.example:lib"), "项目依赖应使用被引用项目的版本");
+    }
+
+    /**
+     * 没有应用本插件的项目依赖只内嵌普通 jar。
+     *
+     * <p>注解处理器这类模块通常不应用本插件，它没有瘦身包与描述文件。此时解析端会把它当作没有描述文件的叶子，
+     * 回落到普通 jar，与消费一个尚未接入本插件的已发布库行为一致；直接报错会让这类项目无法被声明。
+     */
+    @Test
+    void 未应用插件的项目依赖回落到普通jar() throws IOException {
+        writeSettings(root, "rootProject.name = 'demo'\ninclude 'plain'\n");
+        writeFile(root, "plain/build.gradle", """
+                plugins { id 'java-library' }
+                version = '0.7.0'
+                group = 'com.example'
+                """);
+        writeBuildFile(root, buildScript().replace(
+                "slimJarJar 'com.example:top:1.0.0'", "slimJarJar project(':plain')"));
+
+        run(root, "jar");
+
+        Path jar = project.resolve("build/libs/demo-1.2.3.jar");
+        List<String> ids = metadataModuleIds(jar);
+        assertTrue(ids.contains("com.example:plain"), "元数据应包含未应用插件的项目，实际为 " + ids);
+        assertTrue(
+                metadataPaths(jar).stream().anyMatch(path -> path.endsWith(".jar") && !path.endsWith("-slim.jar")),
+                "未应用插件的项目应内嵌普通 jar，实际为 " + metadataPaths(jar));
     }
 
     @Test
@@ -276,5 +329,28 @@ class SlimJarJarFunctionalTest extends BuildFixture {
         assertEquals(
                 "[1.0.0,2.0.0)",
                 json.getAsJsonArray("dependencies").get(0).getAsJsonObject().get("versionRange").getAsString());
+    }
+
+    /**
+     * 项目声明 {@code mavenLocal()} 时，插件读取仓库信息不能影响依赖解析。
+     *
+     * <p>Gradle 的 {@code MavenArtifactRepository.getCredentials()} 并不是只读查询：首次调用会把该仓库标记为
+     * 「使用凭据」，之后创建解析器时改用 {@code AllSchemesAuthentication}，而该认证方案只被 http/https 支持。
+     * {@code mavenLocal()} 是 {@code file:} 仓库，一旦被调用就会在解析依赖时报
+     * {@code Authentication scheme 'all'(Authentication) is not supported by protocol 'file'}，
+     * 并且这个错误发生在与插件无关的配置上（实测是 {@code compileTestJava} 的注解处理器路径），
+     * 排查时很难联想到插件。这里用配置缓存下的完整构建固定住该行为。
+     */
+    @Test
+    void 声明了mavenLocal时构建仍可解析依赖() throws IOException {
+        writeBuildFile(root, buildScript().replace(
+                "repositories {",
+                "repositories {\n    mavenLocal()").replace(
+                "dependencies {",
+                "dependencies {\n    testAnnotationProcessor 'com.example:leaf:1.0.0'"));
+
+        BuildResult result = run(root, "build", "--configuration-cache");
+
+        assertFalse(result.getOutput().contains("is not supported by protocol"), result.getOutput());
     }
 }

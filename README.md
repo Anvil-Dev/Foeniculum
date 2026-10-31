@@ -55,10 +55,17 @@ dependencies {
     jarJar 'com.example:legacy-lib:1.0.0'                          // Native MDG; Foeniculum does not touch it
     slimJarJar 'com.example.lib:core-lib:[2.0.0,3.0.0)'             // Version ranges are supported
     slimJarJar 'com.example.lib:util-lib:1.4.2'                    // Fixed versions work too
+    slimJarJar project(':core')                                    // Sibling projects in the same build work too
 }
 ```
 
 `autoAttachPublishing` only has an effect when the project applies `maven-publish`. When enabled, the slim jar is attached with classifier `slim` and the descriptor with classifier `slim-metadata`, so there is no need to declare the `artifact` entries by hand. When disabled, the plugin leaves the publishing configuration untouched and the project decides how to publish the two files.
+
+## Project dependencies
+
+A `slimJarJar` declaration may point at a project in the same build. The dependency's artifacts are not in any Maven repository, so the plugin stages them into an in-build `file:` Maven repository first: the jar, plus the slim jar and descriptor when that project also applies this plugin. Resolution then walks the exact same path it uses for published coordinates, so there is only one resolution implementation and no risk of the two diverging.
+
+The staged repository takes precedence over the project's declared repositories, so a downstream module always gets the artifact built from current sources rather than a same-version copy from a remote repository. Staging tasks are created per consumer, which lets a dependency that never applies this plugin (an annotation processor module, for instance) be embedded as a plain jar, exactly like a published library that does not ship a descriptor. The staging directory covers the whole project dependency closure, because a sibling module's own descriptor may reference further siblings.
 
 ## The three artifacts
 
@@ -149,8 +156,6 @@ If a downstream descriptor mentions a repository the current project has not dec
 ## Explicitly unsupported
 
 Only the `main` source set is handled. Artifacts from other source sets are outside this plugin's scope.
-
-`slimJarJar` does not accept project dependencies. Declaring one raises an exception explaining why: the mechanism relies on artifacts flowing through Maven repositories, and a project dependency has no publishable coordinate and no descriptor for downstream to read. Forcing support would only produce an unreproducible resolution path.
 
 Dynamic versions (such as `1.+` or `latest.release`) are rejected. Use a fixed version or a version range instead; the resolved result must be uniquely determined by the descriptor itself.
 

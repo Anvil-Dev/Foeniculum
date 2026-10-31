@@ -155,6 +155,13 @@ public final class RepositorySlimArtifactSource implements SlimArtifactSource {
                 + reason + "；若解析结果缺少内容，请检查该仓库的可用性");
     }
 
+    /**
+     * 依次查询各仓库下载构件。
+     *
+     * <p>与读取描述文件不同，这里不能因为「有仓库出错」就放弃下载：项目依赖暂存成的 {@code file:} 仓库往往只
+     * 提供普通 jar，而远程仓库对这个坐标本来就没有内容。只有全部仓库都以错误收场、且没有任何仓库明确回答
+     * 「不存在」时，才说明无法判断该构件到底有没有，此时才把错误报告出来。
+     */
     @Override
     public boolean download(String group, String artifact, String version, String classifier, Path target) {
         String fileName = classifier == null
@@ -163,22 +170,25 @@ public final class RepositorySlimArtifactSource implements SlimArtifactSource {
         String relative = coordinatePath(group, artifact, version) + "/" + fileName;
 
         List<String> failures = new ArrayList<>();
+        boolean definitelyAbsent = false;
         for (SlimRepository repository : repositories) {
             byte[] content;
             try {
                 content = read(repository, relative);
             } catch (RuntimeException e) {
-                failures.add(e.getMessage());
+                failures.add(repository.url() + "：" + e.getMessage());
+                warnAccessFailure(repository, "构件 " + group + ":" + artifact, e.getMessage());
                 continue;
             }
             if (content == null) {
+                definitelyAbsent = true;
                 continue;
             }
             write(target, content);
             return true;
         }
 
-        if (!failures.isEmpty()) {
+        if (!definitelyAbsent && !failures.isEmpty()) {
             throw new IllegalStateException("无法从任何已声明的仓库获取构件 " + group + ":" + artifact
                     + ":" + version + "（" + fileName + "）：\n  - " + String.join("\n  - ", failures));
         }

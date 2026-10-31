@@ -50,10 +50,21 @@ final class ModDevGradleAttributes {
         });
     }
 
+    /**
+     * 复制原生配置的变体属性。
+     *
+     * <p>跳过 {@link TargetJvmVersion}：它在原生配置上的取值可能在 ModDevGradle 应用时尚未定稿，
+     * 提前读走会把当时的值固定下来，之后项目把工具链改成别的版本时两个配置就会出现不同的目标 JVM，
+     * 同一份坐标在两个配置里选中不同变体。该属性由 {@link #applyDefaults(Project, Configuration)}
+     * 以工具链属性为源延迟取值，因此始终跟随项目自身的工具链。
+     */
     private static void copyAll(Configuration source, Configuration target) {
         var sourceAttributes = source.getAttributes();
         target.attributes(attributes -> {
             for (Attribute<?> attribute : sourceAttributes.keySet()) {
+                if (TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE.equals(attribute)) {
+                    continue;
+                }
                 copyAttribute(sourceAttributes, attribute, attributes);
             }
         });
